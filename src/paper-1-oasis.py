@@ -7,15 +7,16 @@ import seaborn as sns
 
 from calculate_roi_volumes import calculate_roi_volumes
 from options import silent_run, dataset_dir, output_dir
-from resample_atlas_for_user import resample_atlas_for_user
+from resample_atlas_for_user_nifti import resample_atlas_for_user_nifti
+from src.upload_nifti import upload_nifti
 
-file_path = os.path.join(dataset_dir, 'sub-OASIS10001_ses-M00_T1w.nii.gz')
+workdir_file_path = os.path.join(dataset_dir, 'sub-OASIS10001_ses-M00_T1w.nii.gz')
 
-user_nifti = nib.load(file_path)
-user_atlas, voxel_size = resample_atlas_for_user(user_nifti)
+nifti_file, _ = upload_nifti(workdir_file_path, None, "anonymous-1")
+resample_atlas_for_user_nifti(nifti_file['id'])
+roi_volumes = calculate_roi_volumes(nifti_file['id'])
 
-# Calculate ROI volumes
-roi_volumes = calculate_roi_volumes(user_nifti, user_atlas.get_fdata(), voxel_size)
+exit(0)
 
 ########## PAPER STARTS ##########
 patient_id = 'sub-OASIS10001'

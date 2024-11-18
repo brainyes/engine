@@ -1,9 +1,29 @@
 import numpy as np
+import nibabel as nib
+
+from src.data import supabase
+from src.supabase_utilities import get_nifti_file, get_user_meta
 
 
-def calculate_roi_volumes(nifti_img, atlas_data, voxel_size):
-    data = nifti_img.get_fdata()
+def calculate_roi_volumes(nifti_file_id):
+    response = supabase.schema("public").rpc("get_file_type_among_children", {"p_nifti_file_id": nifti_file_id,
+                                                                             "p_file_type": "nii"}).single().execute()
+    user_nifti_file = response.data
+    user_nifti_file, _, user_nifti_gz_path = get_nifti_file(user_nifti_file, True)
+    user_nifti = nib.load(user_nifti_gz_path)
+
+    response = supabase.schema("public").rpc("get_file_type_among_children", {"p_nifti_file_id": nifti_file_id,
+                                                                             "p_file_type": "atlas-sampled.nii"}).single().execute()
+    atlas_sampled_nifti_file = response.data
+    atlas_sampled_nifti_file, _, atlas_sampled_nifti_gz_path = get_nifti_file(atlas_sampled_nifti_file, True)
+    atlas_sampled_nifti = nib.load(atlas_sampled_nifti_gz_path)
+
+    voxel_size = get_user_meta(atlas_sampled_nifti_file['user_id'], 'voxel_size')
+
+    data = user_nifti.get_fdata()
     roi_volumes = {}
+
+    atlas_data = atlas_sampled_nifti.get_fdata()
 
     # Iterate through unique ROI labels in the atlas
     for roi_label in np.unique(atlas_data):
@@ -19,4 +39,10 @@ def calculate_roi_volumes(nifti_img, atlas_data, voxel_size):
 
         roi_volumes[roi_label] = roi_volume
 
+
+    # todo save roi_volumes
+    #   also validate the data so far.
     return roi_volumes
+
+result = calculate_roi_volumes("1a0ffcbb-75e6-4e10-9273-4d7f7ad143ca")
+print(result)
