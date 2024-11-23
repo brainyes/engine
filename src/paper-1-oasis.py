@@ -1,34 +1,59 @@
 import os
 
 import matplotlib.pyplot as plt
-import nibabel as nib
 import pandas as pd
 import seaborn as sns
 
 from calculate_roi_volumes import calculate_roi_volumes
 from options import silent_run, dataset_dir, output_dir
 from resample_atlas_for_user_nifti import resample_atlas_for_user_nifti
-from src.upload_nifti import upload_nifti
+from supabase_utilities import get_roi_volumes_for_niftis
+from upload_nifti import upload_nifti
 
-workdir_file_path = os.path.join(dataset_dir, 'sub-OASIS10001_ses-M00_T1w.nii.gz')
+upload_sample = False
 
-nifti_file, _ = upload_nifti(workdir_file_path, None, "anonymous-1")
-resample_atlas_for_user_nifti(nifti_file['id'])
-roi_volumes = calculate_roi_volumes(nifti_file['id'])
+# todo required data flow. getOrGenerate()
+# todo bulk initial process / migration / reprocess
+# todo required initial data specific to this paper, e.g. OASIS_BIDS,tsv
+    # todo OASIS is a given dataset, plus we need user's survey here no?
 
-exit(0)
+if upload_sample is True:
+    # upload an example MRI nifti file
+    workdir_file_path = os.path.join(dataset_dir, 'raw', 'sub-OASIS10001_ses-M00_T1w.nii.gz')
+    print(workdir_file_path)
+    nifti_file, _ = upload_nifti(workdir_file_path, None, "anonymous-3")
+    print(nifti_file)
+    atlas_sampled_nifti_file, user_meta = resample_atlas_for_user_nifti(nifti_file['id'])
+    print(atlas_sampled_nifti_file)
+    print(str(user_meta))
+    roi_volumes = calculate_roi_volumes(nifti_file['id'])
+    print(roi_volumes)
+    exit(0)
+else:
+    volumes_for_niftis = get_roi_volumes_for_niftis()
 
 ########## PAPER STARTS ##########
-patient_id = 'sub-OASIS10001'
-
 tsv_file_path = os.path.join(dataset_dir, 'tsv_files', 'lab_1', 'OASIS_BIDS.tsv')
 
 # Dictionary to store patient data
-patient_data = {}
-patient_data[patient_id] = roi_volumes
+# patient_id = 'sub-OASIS10001'
+# patient_data[patient_id] = roi_volumes
+patient_data = volumes_for_niftis
+# group by nifti_file_id, returned dictionary looks like:
+# {nifti_file_id: {label1: volume}}
+# for i, volumes_for_nifti in volumes_for_niftis.items():
+#     nifti_file_id = volumes_for_nifti['nifti_file_id']
+#     if nifti_file_id not in patient_data:
+#         patient_data[nifti_file_id] = {}
+#     patient_data[nifti_file_id][volumes_for_nifti['label']] = volumes_for_nifti['volume']
+
 
 # Load neuropsychological data
 neuro_data = pd.read_csv(tsv_file_path, sep='\t')
+# Replace the participant IDs from survey data with the incoming nifti IDs as patient IDs
+new_ids = list(patient_data.keys())
+for i, new_id in enumerate(new_ids):
+    neuro_data['participant_id'] = neuro_data['participant_id'].replace(f'sub-OASIS1000{i+1}', new_id)
 
 # Convert patient_data dictionary to a DataFrame
 roi_volumes_df = pd.DataFrame.from_dict(patient_data, orient='index').fillna(0)

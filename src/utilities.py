@@ -64,3 +64,42 @@ def compress_in_memory(content):
         f.write(content)
 
     return out.getvalue()
+
+
+def cast_value(value):
+    """
+    Cast a string value to its appropriate Python data type. Typically used for things like DB-accessed meta values.
+
+    Args:
+        value: The value to cast (usually a string from database)
+
+    Returns:
+        The value cast to its appropriate type (int, float, bool, or str)
+    """
+    # Handle None/null values
+    if value is None:
+        return None
+
+    # Convert to string first to handle any input
+    str_value = str(value).strip().lower()
+
+    # Handle boolean values
+    if str_value in ('true', 'false'):
+        return str_value == 'true'
+
+    # Try casting to numeric types
+    try:
+        # Check if it's an integer
+        if str_value.isdigit() or (str_value.startswith('-') and str_value[1:].isdigit()):
+            return int(str_value)
+
+        # Check if it's a float
+        float_value = float(str_value)
+        # Check if it's actually an integer
+        if float_value.is_integer():
+            return int(float_value)
+        return float_value
+
+    except ValueError:
+        # If all else fails, return as string
+        return value

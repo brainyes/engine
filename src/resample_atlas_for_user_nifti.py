@@ -8,9 +8,9 @@ from nilearn import plotting
 from nilearn.image import resample_img
 
 from options import silent_run, output_dir, save_assets, atlas_file_path
-from src.data import supabase
-from src.supabase_utilities import get_nifti_file
-from src.utilities import prefix_file_in_path
+from data import supabase
+from supabase_utilities import get_nifti_file
+from utilities import prefix_file_in_path
 
 
 def resample_atlas_for_user_nifti(nifti_file_id):
@@ -53,5 +53,7 @@ def resample_atlas_for_user_nifti(nifti_file_id):
 
     return atlas_sampled_nifti_file, user_meta
 
-result = resample_atlas_for_user_nifti("1a0ffcbb-75e6-4e10-9273-4d7f7ad143ca")
-print(result)
+# example:
+if __name__=="__main__":
+    result = resample_atlas_for_user_nifti("1a0ffcbb-75e6-4e10-9273-4d7f7ad143ca")
+    print(result)

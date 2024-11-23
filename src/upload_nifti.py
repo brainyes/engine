@@ -37,7 +37,7 @@ def upload_nifti(nifti_gz, user_id = None, public_id = None):
     upload_obj = upload_res.json()
     nifti_file = supabase.schema("public").table("nifti_files").upsert(
         {"id": upload_obj['Id'], "user_id": user.id,
-         "file_type": "nii"}).execute().data
+         "file_type": "nii"}).execute().data[0]
 
     upload_res = supabase.storage.from_("nifti_gz_files").upload(
         file=file_content, path=storage_file_name + ".nii.gz",
@@ -49,6 +49,7 @@ def upload_nifti(nifti_gz, user_id = None, public_id = None):
     return nifti_file, nifti_file_zipped
 
 # example:
-res = upload_nifti("/Users/oytuntez/dev/cerebro-oasis-test/research/input/HarvardOxford-cort-maxprob-thr25-2mm.nii.gz",
-                   None, 1)
-print(res)
+if __name__=="__main__":
+    res = upload_nifti("/Users/oytuntez/dev/cerebro-oasis-test/research/input/HarvardOxford-cort-maxprob-thr25-2mm.nii.gz",                   None, 1)
+    print(res)
+

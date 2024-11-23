@@ -1,8 +1,8 @@
 import numpy as np
 import nibabel as nib
 
-from src.data import supabase
-from src.supabase_utilities import get_nifti_file, get_user_meta
+from data import supabase
+from supabase_utilities import get_nifti_file, get_user_meta
 
 
 def calculate_roi_volumes(nifti_file_id):
@@ -40,9 +40,17 @@ def calculate_roi_volumes(nifti_file_id):
         roi_volumes[roi_label] = roi_volume
 
 
-    # todo save roi_volumes
-    #   also validate the data so far.
-    return roi_volumes
+    # save roi_volumes for the user's nifti file
+    roi_volume_records = [
+        {"nifti_file_id": nifti_file_id, "label": roi_label, "volume": float(roi_volume)}
+        for roi_label, roi_volume in roi_volumes.items()
+    ]
+    response = (supabase.schema("public").table("roi_volumes")
+                .upsert(roi_volume_records, on_conflict="nifti_file_id, label").execute())
 
-result = calculate_roi_volumes("1a0ffcbb-75e6-4e10-9273-4d7f7ad143ca")
-print(result)
+    return roi_volumes, response.data
+
+# example:
+if __name__=="__main__":
+    result = calculate_roi_volumes("1a0ffcbb-75e6-4e10-9273-4d7f7ad143ca")
+    print(result)

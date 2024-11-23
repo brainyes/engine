@@ -1,11 +1,28 @@
-from src.data import supabase
-from src.utilities import save_to_temp_file
+from data import supabase
+from utilities import save_to_temp_file, cast_value
 
+
+def get_all_nifti_files():
+    response = supabase.schema("public").table("nifti_files").select("*").execute()
+    nifti_files = response.data
+    return nifti_files
+
+def get_roi_volumes_for_niftis():
+    response = supabase.schema("public").table("roi_volumes").select("*").execute()
+    grouped_data = {}
+    # group by nifti_file_id, returned dictionary looks like:
+    # {nifti_file_id: {label1: volume}}
+    for record in response.data:
+        nifti_file_id = record['nifti_file_id']
+        if nifti_file_id not in grouped_data:
+            grouped_data[nifti_file_id] = {}
+        grouped_data[nifti_file_id][record['label']] = record['volume']
+    return grouped_data
 
 def get_nifti_file(nifti_file_or_id, download = False):
     if not isinstance(nifti_file_or_id, dict):
         response = supabase.schema("public").table("nifti_files").select("*").eq("id", nifti_file_or_id).maybe_single().execute()
-        nifti_file = response.data
+        nifti_file = response.data if response else None
     else:
         nifti_file = nifti_file_or_id
 
@@ -33,7 +50,15 @@ def download_nifti_file(nifti_file = None, storage_object = None):
     return save_to_temp_file(nifti_gz_data, storage_object['name'])
 
 def get_user_meta(user_id, meta_key):
-    return (supabase.schema("public").table("usermeta")
+    return cast_value((supabase.schema("public").table("usermeta")
             .select("meta_value")
             .eq("user_id", user_id).eq("meta_key", meta_key)
-            .maybe_single().execute()).data['meta_value']
+            .maybe_single().execute()).data['meta_value'])
+
+def get_roi_volumes(nifti_file_id):
+    response = supabase.schema("public").table("roi_volumes").select("*").eq("nifti_file_id", nifti_file_id).execute()
+    volumes = response.data
+    roi_volumes = {}
+    for volume in volumes:
+        roi_volumes[volume['label']] = volume['volume']
+    return roi_volumes
