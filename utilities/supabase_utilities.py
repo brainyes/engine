@@ -29,6 +29,7 @@ def get_nifti_file(nifti_file_or_id, download = False):
     if not isinstance(nifti_file_or_id, dict):
         response = supabase.schema("public").table("nifti_files").select("*").eq("id", nifti_file_or_id).maybe_single().execute()
         nifti_file = response.data if response else None
+        print("found nifti file: ", nifti_file)
     else:
         nifti_file = nifti_file_or_id
 

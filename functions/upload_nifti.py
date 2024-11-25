@@ -1,7 +1,11 @@
 import gzip
+import inngest
 import time
 
+from functions.calculate_roi_volumes import fn as calculate_roi_volumes
+from functions.resample_atlas_for_user_nifti import fn as resample_atlas_for_user_nifti
 from utilities.data import supabase
+from utilities.inngest import client as inngest_client
 
 # todo owner_id needs refactor. it's actually sth like users.slug or users.nickname.
 #   and maybe a users.type kind of a thing to differentiate between anonymous/public people
@@ -48,8 +52,25 @@ def upload_nifti(nifti_gz, user_id = None, public_id = None):
 
     return nifti_file, nifti_file_zipped
 
+
+@inngest_client.create_function(
+    fn_id="upload_nifti",
+    trigger=inngest.TriggerEvent(event="nifti_file_uploaded"),
+)
+async def fn(ctx: inngest.Context, step: inngest.Step):
+    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
+    nifti_file, nifti_file_zipped = await step.run("upload-from-path", lambda: upload_nifti(**parameters))
+    res1 = await step.invoke("resample_atlas_for_user_nifti", function=resample_atlas_for_user_nifti, data={
+        "nifti_file_id": nifti_file['id']
+    })
+    res2 = await step.invoke("calculate_roi_volumes", function=calculate_roi_volumes, data={
+        "nifti_file_id": nifti_file['id']
+    })
+    return res1, res2
+
+
+
 # example:
 if __name__=="__main__":
-    res = upload_nifti("/Users/oytuntez/dev/cerebro-oasis-test/research/input/HarvardOxford-cort-maxprob-thr25-2mm.nii.gz",                   None, 1)
+    res = upload_nifti("/Users/oytuntez/dev/cerebro-oasis-test/research/input/raw/sub-OASIS10001_ses-M00_T1w.nii.gz",                   None, 1)
     print(res)
-

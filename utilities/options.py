@@ -9,7 +9,7 @@ save_assets = True
 
 
 # Get the script's directory
-script_dir = os.path.join(os.path.dirname(__file__), '../../research')
+script_dir = os.path.join(os.path.dirname(__file__), '../research')
 dataset_dir = os.path.join(script_dir, 'input')
 output_dir = os.path.join(script_dir, 'output')
 

@@ -5,5 +5,7 @@ numpy==1.24.4
 pandas==2.2.3
 seaborn==0.13.2
 supabase==2.9.1
-
 python-dotenv~=1.0.0
+fastapi
+inngest
+uvicorn

@@ -1,3 +1,4 @@
+import inngest
 import os
 
 import matplotlib.pyplot as plt
@@ -10,6 +11,7 @@ from utilities.options import silent_run, output_dir, save_assets, atlas_file_pa
 from utilities.data import supabase
 from utilities.supabase_utilities import get_nifti_file
 from utilities.utilities import prefix_file_in_path
+from utilities.inngest import client as inngest_client
 
 
 def resample_atlas_for_user_nifti(nifti_file_id):
@@ -45,12 +47,26 @@ def resample_atlas_for_user_nifti(nifti_file_id):
         "file_type": "atlas-sampled.nii"
     }).execute().data
 
+    print("Saved Atlas-sample nifti file: ", atlas_sampled_nifti_file)
+
     # save voxel_size
     user_meta = (supabase.schema("public")
                  .rpc("set_user_meta", {"p_user_id": nifti_file['user_id'], "p_meta_key": "voxel_size", "p_meta_value": voxel_size})
                  .single().execute()).data
 
+    print("Saved voxel size: ", user_meta)
+
     return atlas_sampled_nifti_file, user_meta
+
+@inngest_client.create_function(
+    fn_id="resample_atlas_for_user_nifti",
+    trigger=inngest.TriggerEvent(event="uploaded_nifti"),
+)
+async def fn(ctx: inngest.Context, step: inngest.Step):
+    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
+    res = resample_atlas_for_user_nifti(**parameters)
+    print("fn res: ", res)
+    return res
 
 # example:
 if __name__=="__main__":
