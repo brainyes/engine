@@ -7,17 +7,25 @@ import seaborn as sns
 from calculate_roi_volumes import calculate_roi_volumes
 from options import silent_run, dataset_dir, output_dir
 from resample_atlas_for_user_nifti import resample_atlas_for_user_nifti
-from supabase_utilities import get_roi_volumes_for_niftis
+from supabase_utilities import get_roi_volumes_for_niftis, get_nifti_file, get_user_insight, save_insight_output, \
+    save_insight_output_file, save_insight_output_pandas
 from upload_nifti import upload_nifti
+from utilities import plot_to_image
 
-upload_sample = False
-
-# todo required data flow. getOrGenerate()
+# todo required data flow. getOrGenerate() / dependencies on other workflows
 # todo bulk initial process / migration / reprocess
 # todo required initial data specific to this paper, e.g. OASIS_BIDS,tsv
     # todo OASIS is a given dataset, plus we need user's survey here no?
+# todo output / generic output for insights?
 
-if upload_sample is True:
+PARAMETERS = {
+    "nifti_id": "27c1ae7e-184e-4fd5-989b-b193003d3de2", # example
+    "user_id": "d480e950-fb57-4ad8-9797-17e5aa8fc1cf", # example
+}
+INSIGHT_NAME = "paper-1-oasis"
+UPLOAD_SAMPLE = False
+
+if UPLOAD_SAMPLE is True:
     # upload an example MRI nifti file
     workdir_file_path = os.path.join(dataset_dir, 'raw', 'sub-OASIS10001_ses-M00_T1w.nii.gz')
     print(workdir_file_path)
@@ -30,27 +38,21 @@ if upload_sample is True:
     print(roi_volumes)
     exit(0)
 else:
-    volumes_for_niftis = get_roi_volumes_for_niftis()
 
 ########## PAPER STARTS ##########
-tsv_file_path = os.path.join(dataset_dir, 'tsv_files', 'lab_1', 'OASIS_BIDS.tsv')
+    print("PARAMETERS: ", PARAMETERS)
+    nifti_file, _, _ = get_nifti_file(PARAMETERS["nifti_id"])
+    print(nifti_file)
+    volumes_for_niftis = get_roi_volumes_for_niftis()
 
-# Dictionary to store patient data
-# patient_id = 'sub-OASIS10001'
-# patient_data[patient_id] = roi_volumes
+user_insight = get_user_insight(INSIGHT_NAME, nifti_file['user_id'], nifti_file['id'])
 patient_data = volumes_for_niftis
-# group by nifti_file_id, returned dictionary looks like:
-# {nifti_file_id: {label1: volume}}
-# for i, volumes_for_nifti in volumes_for_niftis.items():
-#     nifti_file_id = volumes_for_nifti['nifti_file_id']
-#     if nifti_file_id not in patient_data:
-#         patient_data[nifti_file_id] = {}
-#     patient_data[nifti_file_id][volumes_for_nifti['label']] = volumes_for_nifti['volume']
-
 
 # Load neuropsychological data
+tsv_file_path = os.path.join(dataset_dir, 'tsv_files', 'lab_1', 'OASIS_BIDS.tsv')
 neuro_data = pd.read_csv(tsv_file_path, sep='\t')
-# Replace the participant IDs from survey data with the incoming nifti IDs as patient IDs
+
+# todo @DEMO - Replace the participant IDs from survey data with the incoming nifti IDs as patient IDs
 new_ids = list(patient_data.keys())
 for i, new_id in enumerate(new_ids):
     neuro_data['participant_id'] = neuro_data['participant_id'].replace(f'sub-OASIS1000{i+1}', new_id)
@@ -60,33 +62,27 @@ roi_volumes_df = pd.DataFrame.from_dict(patient_data, orient='index').fillna(0)
 roi_volumes_df['total_volume'] = roi_volumes_df.sum(axis=1)
 roi_volumes_df.index = roi_volumes_df.index.str.replace('sub-', '')
 
-# Remove the 'sub-' prefix from the participant_id in the neuropsychological data to match the NIfTI participant_id format
-neuro_data['participant_id'] = neuro_data['participant_id'].str.replace(
-    'sub-', '')
+# Match participant_id in the neuropsychological data with the NIfTI participant_id format
+neuro_data['participant_id'] = neuro_data['participant_id'].str.replace('sub-', '')
 
 # Merge neuropsychological data with the calculated ROI volumes based on the participant_id
 combined_data = neuro_data.merge(
     roi_volumes_df, left_on='participant_id', right_index=True, how='inner')
 
-# Save the combined data to a new CSV file using relative path
-# @oytun: i believe this is an optional output in this script
-combined_data.to_csv(os.path.join(
-    output_dir, 'combined_patient_data.csv'), index=False)
-
-roi_volume_columns = roi_volumes_df.columns.tolist()  # Get the ROI volume columns
+roi_volume_columns = roi_volumes_df.columns.tolist()
 roi_volumes_to_store = combined_data[["participant_id"] + roi_volume_columns]
 
 # Define the list of attributes for correlation
-list1 = ['sex', 'education_level', 'age_bl', 'cdr',
+correlated_attributes = ['sex', 'education_level', 'age_bl', 'cdr',
          'diagnosis_bl', 'MMS', 'cdr_global', 'diagnosis']
 
-# Ensure that the combined data contains all attributes in list1
-for attribute in list1:
+# Ensure that the combined data contains all attributes in correlated_attributes
+for attribute in correlated_attributes:
     if attribute not in combined_data.columns:
         print(f"Warning: {attribute} not found in combined_data.")
 
 # Select the relevant columns from the combined data, excluding participant_id
-correlation_data = combined_data[roi_volume_columns + list1]
+correlation_data = combined_data[roi_volume_columns + correlated_attributes]
 
 # Convert any non-numeric data to numeric (e.g., encoding categorical variables if necessary)
 correlation_data_encoded = pd.get_dummies(correlation_data, drop_first=True)
@@ -99,7 +95,9 @@ correlation_matrix_roi = correlation_matrix.loc[roi_volume_columns,
 correlation_data_encoded.columns.difference(roi_volume_columns)]
 
 # Print the shape of the correlation matrix
+# todo output
 print(f"Correlation matrix shape: {correlation_matrix_roi.shape}")
+save_insight_output_pandas(user_insight['id'], 'correlation_matrix_roi', correlation_matrix_roi)
 
 # Visualize the correlation matrix using seaborn
 plt.figure(figsize=(12, 8))
@@ -113,7 +111,9 @@ sns.heatmap(
 )
 plt.title('Correlation Matrix ROI Volumes - Attributes', fontsize=16)
 plt.tight_layout()  # Adjust layout to make room for the title
+# todo output
 plt.savefig(os.path.join(output_dir, 'correlation_matrix.png'))
+save_insight_output_file(user_insight['id'], 'correlation_matrix.png', plot_to_image())
 if not silent_run:
     plt.show()
 
@@ -141,7 +141,9 @@ plt.tight_layout()  # Adjust layout to avoid overlap
 plt.tight_layout()
 plt.savefig(os.path.join(
     output_dir, 'Correlation_Between_Total_Volume_and_MMS_Scores.pdf'), format='pdf')
+# todo output
 plt.savefig(os.path.join(output_dir, 'Correlation_Between_Total_Volume_and_MMS_Scores.png'))
+save_insight_output_file(user_insight['id'], 'Correlation_Between_Total_Volume_and_MMS_Scores.png', plot_to_image())
 if not silent_run:
     plt.show()
 
@@ -163,29 +165,32 @@ plt.legend(title='Sex')
 
 # Show the plot
 plt.tight_layout()
+# todo output
 plt.savefig(os.path.join(output_dir, 'Distribution of MMS Scores by Total Volume.png'))
+save_insight_output_file(user_insight['id'], 'distribution_of_mms_scores_by_total_volume.png', plot_to_image())
 if not silent_run:
     plt.show()
 
 # Calculate the correlation of each ROI with the MMS score
-correlation_with_mms = correlation_matrix_roi['MMS'].abs(
-).sort_values(ascending=False)
+# todo output
+correlation_with_mms = correlation_matrix_roi['MMS'].abs().sort_values(ascending=False)
+save_insight_output_pandas(user_insight['id'], 'correlation_with_mms', correlation_with_mms)
 
-# Get the top 3 most correlated ROIs
-top_3_rois = correlation_with_mms.index[1:4]  # Exclude the MMS itself
+# Get all correlated ROIs (excluding MMS itself)
+correlated_rois = correlation_with_mms.index[1:]
 
-# Print the top 3 correlations
-print("Top 3 ROIs correlated with MMS:")
-for roi in top_3_rois:
+# Print correlations
+print("ROIs correlated with MMS:")
+for roi in correlated_rois:
     correlation_value = correlation_with_mms[roi]
     print(f"{roi}: {correlation_value:.2f}")
 
 # Set up the figure size for the plots
 plt.figure(figsize=(15, 5))
 
-# Loop through each of the top 3 ROIs to create scatter plots
-for i, roi in enumerate(top_3_rois):
-    plt.subplot(1, 3, i + 1)  # Create a subplot for each ROI
+# Loop through ROIs to create scatter plots
+for i, roi in enumerate(correlated_rois):
+    plt.subplot(1, len(correlated_rois), i + 1)  # Create a subplot for each ROI
     plt.scatter(combined_data[roi], combined_data['MMS'], alpha=0.7)
 
     # Fit a regression line (optional)
@@ -199,6 +204,8 @@ for i, roi in enumerate(top_3_rois):
     plt.grid(True)
 
 plt.tight_layout()  # Adjust layout to avoid overlap
-plt.savefig(os.path.join(output_dir, 'Top 3 ROIs correlated with MMS.png'))
+# todo output
+plt.savefig(os.path.join(output_dir, 'ROIs correlated with MMS.png'))
+save_insight_output_file(user_insight['id'], 'rois_correlated_with_mms.png', plot_to_image())
 if not silent_run:
     plt.show()

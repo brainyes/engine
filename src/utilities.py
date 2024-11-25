@@ -2,6 +2,8 @@ import tempfile
 import os
 import gzip
 import io
+from matplotlib import pyplot as plt
+
 
 def save_to_temp_file(nifti_gz_data, original_name_or_extension=".nii", prefix="cerebro_"):
     """
@@ -103,3 +105,10 @@ def cast_value(value):
     except ValueError:
         # If all else fails, return as string
         return value
+
+
+def plot_to_image():
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png')
+    buffer.seek(0)
+    return buffer.getvalue()

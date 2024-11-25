@@ -1,6 +1,12 @@
+import base64
+
+from io import BytesIO
+
 from data import supabase
 from utilities import save_to_temp_file, cast_value
 
+OUTPUT_TYPE_FILE = "file"
+OUTPUT_TYPE_PANDAS = "pandas"
 
 def get_all_nifti_files():
     response = supabase.schema("public").table("nifti_files").select("*").execute()
@@ -62,3 +68,58 @@ def get_roi_volumes(nifti_file_id):
     for volume in volumes:
         roi_volumes[volume['label']] = volume['volume']
     return roi_volumes
+
+def get_user_insight(name, user_id, nifti_file_id = None):
+    response = supabase.schema("public").table("insights").select("*").eq("slug",
+                                                                          name).maybe_single().execute()
+    if response is None:
+        raise Exception('Insight type {} not found'.format(name))
+    insight = response.data
+    response = (supabase.schema("public").table("user_insights")
+                    .upsert({
+        "insight_id": insight['id'],
+        "user_id": user_id,
+        "nifti_file_id": nifti_file_id,
+    }, on_conflict="insight_id, user_id, nifti_file_id").execute())
+    return response.data[0]
+
+def save_insight_output_file(user_insight_id, output_name, file):
+    storage_file_name = str(user_insight_id) + "/" + str(output_name)
+    supabase.storage.from_("user_insight_outputs").upload(
+        file=file, path=storage_file_name,
+        file_options={"upsert": "true"})
+    print('Uploaded file for insight: ', output_name, storage_file_name)
+    return save_insight_output_typed(user_insight_id, output_name, storage_file_name, OUTPUT_TYPE_FILE)
+
+def save_insight_output_pandas(user_insight_id, output_name, pandas_obj):
+    buffer = BytesIO()
+    pandas_obj.to_csv(buffer)
+    base64_encoded = base64.b64encode(buffer.getvalue()).decode('utf-8')
+    return save_insight_output_typed(user_insight_id, output_name, base64_encoded, OUTPUT_TYPE_PANDAS)
+
+def save_insight_output_typed(user_insight_id, output_name, output_value, output_type = None):
+    response = (supabase.schema("public").table("user_insight_outputs")
+                .upsert({
+        "user_insight_id": user_insight_id,
+        "name": output_name,
+        "value": output_value,
+        "type": output_type,
+    }, on_conflict="user_insight_id, name").execute())
+    print('Saved insight'+(" " + output_type + " " if output_type else " ")+'output: ', output_name)
+    return response.data[0]
+
+def save_insight_output(user_insight_id, output_name, output_value):
+    return save_insight_outputs(user_insight_id, {output_name: output_value})
+
+def save_insight_outputs(user_insight_id, outputs):
+    upserts = []
+    for key in outputs:
+        upserts.append({
+            "user_insight_id": user_insight_id,
+            "name": key,
+            "value": outputs[key],
+        })
+    response = (supabase.schema("public").table("user_insight_outputs")
+                .upsert(upserts, on_conflict="user_insight_id, name").execute())
+    print('Saved insight output(s):', outputs.keys())
+    return response.data
