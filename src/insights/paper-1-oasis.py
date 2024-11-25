@@ -5,12 +5,11 @@ import pandas as pd
 import seaborn as sns
 
 from calculate_roi_volumes import calculate_roi_volumes
-from options import silent_run, dataset_dir, output_dir
+from utilities.options import silent_run, dataset_dir, output_dir, oasis_bids_tsv_path
 from resample_atlas_for_user_nifti import resample_atlas_for_user_nifti
-from supabase_utilities import get_roi_volumes_for_niftis, get_nifti_file, get_user_insight, save_insight_output, \
-    save_insight_output_file, save_insight_output_pandas
+from utilities.supabase_utilities import get_roi_volumes_for_niftis, get_nifti_file, get_user_insight, save_insight_output_file, save_insight_output_pandas
 from upload_nifti import upload_nifti
-from utilities import plot_to_image
+from utilities.utilities import plot_to_image
 
 # todo required data flow. getOrGenerate() / dependencies on other workflows
 # todo bulk initial process / migration / reprocess
@@ -49,8 +48,7 @@ user_insight = get_user_insight(INSIGHT_NAME, nifti_file['user_id'], nifti_file[
 patient_data = volumes_for_niftis
 
 # Load neuropsychological data
-tsv_file_path = os.path.join(dataset_dir, 'tsv_files', 'lab_1', 'OASIS_BIDS.tsv')
-neuro_data = pd.read_csv(tsv_file_path, sep='\t')
+neuro_data = pd.read_csv(oasis_bids_tsv_path, sep='\t')
 
 # todo @DEMO - Replace the participant IDs from survey data with the incoming nifti IDs as patient IDs
 new_ids = list(patient_data.keys())

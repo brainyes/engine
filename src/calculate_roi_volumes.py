@@ -1,8 +1,8 @@
 import numpy as np
 import nibabel as nib
 
-from data import supabase
-from supabase_utilities import get_nifti_file, get_user_meta
+from utilities.data import supabase
+from utilities.supabase_utilities import get_nifti_file, get_user_meta
 
 
 def calculate_roi_volumes(nifti_file_id):

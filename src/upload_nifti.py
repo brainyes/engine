@@ -1,7 +1,7 @@
 import gzip
 import time
 
-from data import supabase
+from utilities.data import supabase
 
 # todo owner_id needs refactor. it's actually sth like users.slug or users.nickname.
 #   and maybe a users.type kind of a thing to differentiate between anonymous/public people

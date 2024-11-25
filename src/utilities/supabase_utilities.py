@@ -2,8 +2,8 @@ import base64
 
 from io import BytesIO
 
-from data import supabase
-from utilities import save_to_temp_file, cast_value
+from utilities.data import supabase
+from utilities.utilities import save_to_temp_file, cast_value
 
 OUTPUT_TYPE_FILE = "file"
 OUTPUT_TYPE_PANDAS = "pandas"

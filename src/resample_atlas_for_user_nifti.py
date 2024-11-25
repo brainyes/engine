@@ -1,5 +1,4 @@
 import os
-import tempfile
 
 import matplotlib.pyplot as plt
 import nibabel as nib
@@ -7,10 +6,10 @@ import numpy as np
 from nilearn import plotting
 from nilearn.image import resample_img
 
-from options import silent_run, output_dir, save_assets, atlas_file_path
-from data import supabase
-from supabase_utilities import get_nifti_file
-from utilities import prefix_file_in_path
+from utilities.options import silent_run, output_dir, save_assets, atlas_file_path
+from utilities.data import supabase
+from utilities.supabase_utilities import get_nifti_file
+from utilities.utilities import prefix_file_in_path
 
 
 def resample_atlas_for_user_nifti(nifti_file_id):
