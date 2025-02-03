@@ -70,6 +70,16 @@ def get_roi_volumes(nifti_file_id):
         roi_volumes[volume['label']] = volume['volume']
     return roi_volumes
 
+def save_insight_type(slug):
+    response = supabase.schema("public").table("insights").select("*").eq("slug",
+                                                                          slug).maybe_single().execute()
+    if response is None:
+        response = (supabase.schema("public").table("insights").upsert({
+            "slug": slug
+        }).execute())
+        response = response.data[0]
+    return response
+
 def get_user_insight(name, user_id, nifti_file_id = None):
     response = supabase.schema("public").table("insights").select("*").eq("slug",
                                                                           name).maybe_single().execute()
