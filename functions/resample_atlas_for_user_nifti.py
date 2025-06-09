@@ -1,5 +1,6 @@
 import inngest
 import os
+import argparse
 
 import matplotlib.pyplot as plt
 import nibabel as nib
@@ -70,5 +71,27 @@ async def fn(ctx: inngest.Context, step: inngest.Step):
 
 # example:
 if __name__=="__main__":
-    result = resample_atlas_for_user_nifti("1a0ffcbb-75e6-4e10-9273-4d7f7ad143ca")
-    print(result)
+    parser = argparse.ArgumentParser(description='Resample brain atlas to match your uploaded NIFTI scan')
+    parser.add_argument('file_id', help='File ID from the upload_nifti output')
+    
+    args = parser.parse_args()
+    
+    print(f"=== ATLAS RESAMPLING ===")
+    print(f"Processing NIFTI file ID: {args.file_id}")
+    print("This will align the brain atlas to match your scan...")
+    print("Please wait, this may take 1-2 minutes...\n")
+    
+    try:
+        result = resample_atlas_for_user_nifti(args.file_id)
+        print("\n=== ATLAS RESAMPLING COMPLETE ===")
+        print("Result:", result)
+        print("\nNext step: Run volume calculation with the same file ID:")
+        print(f"python -m functions.calculate_roi_volumes {args.file_id}")
+        
+    except Exception as e:
+        print(f"❌ Error during atlas resampling: {str(e)}")
+        print("Please check your file ID and try again.")
+        os._exit(1)
+    
+    # Force exit to prevent hanging
+    os._exit(0)

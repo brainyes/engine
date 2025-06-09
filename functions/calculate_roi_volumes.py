@@ -1,6 +1,7 @@
 import inngest
 import numpy as np
 import nibabel as nib
+import argparse
 
 from utilities.inngest import client as inngest_client
 from utilities.data import supabase
@@ -68,5 +69,34 @@ async def fn(ctx: inngest.Context, step: inngest.Step):
 
 # example:
 if __name__=="__main__":
-    result = calculate_roi_volumes("1a0ffcbb-75e6-4e10-9273-4d7f7ad143ca")
-    print(result)
+    parser = argparse.ArgumentParser(description='Calculate brain region volumes from your uploaded NIFTI scan')
+    parser.add_argument('file_id', help='File ID from the upload_nifti output')
+    
+    args = parser.parse_args()
+    
+    print("=== ROI VOLUME CALCULATION ===")
+    print(f"Processing NIFTI file ID: {args.file_id}")
+    print("This will measure the volume of each brain region...")
+    print("Please wait, this may take 30-60 seconds...\n")
+    
+    try:
+        result = calculate_roi_volumes(args.file_id)
+        print("\n=== VOLUME CALCULATION COMPLETE ===")
+        print(f"✅ Calculated volumes for {len(result)} brain regions")
+        print("📊 Results saved to database.")
+        print("\n🧠 Sample results (first 5 regions):")
+        for i, region in enumerate(result[:5]):
+            print(f"   Region {region['label']}: {region['volume']:.2f} cubic mm")
+        if len(result) > 5:
+            print(f"   ... and {len(result) - 5} more regions")
+        
+        print(f"\n🎉 Analysis complete! Your brain scan has been fully processed.")
+        
+    except Exception as e:
+        print(f"❌ Error during volume calculation: {str(e)}")
+        print("Please check your file ID and ensure atlas resampling was completed first.")
+        os._exit(1)
+    
+    # Force exit to prevent hanging
+    import os
+    os._exit(0)

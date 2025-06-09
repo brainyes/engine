@@ -1,6 +1,9 @@
 import gzip
 import inngest
 import time
+import os
+import threading
+import argparse
 
 from functions.calculate_roi_volumes import fn as calculate_roi_volumes
 from functions.resample_atlas_for_user_nifti import fn as resample_atlas_for_user_nifti
@@ -72,5 +75,43 @@ async def fn(ctx: inngest.Context, step: inngest.Step):
 
 # example:
 if __name__=="__main__":
-    res = upload_nifti("/Users/oytuntez/dev/cerebro-oasis-test/research/input/raw/sub-OASIS10001_ses-M00_T1w.nii.gz",                   None, 1)
-    print(res)
+    parser = argparse.ArgumentParser(description='Upload a NIFTI brain scan file to Cerebro for analysis')
+    parser.add_argument('nifti_file', help='Path to the NIFTI file (.nii or .nii.gz)')
+    parser.add_argument('--public-id', type=int, default=1, help='Public ID for the analysis session (default: 1)')
+    
+    args = parser.parse_args()
+    
+    # Check if file exists
+    if not os.path.exists(args.nifti_file):
+        print(f"❌ Error: File not found: {args.nifti_file}")
+        print("Please check the file path and try again.")
+        os._exit(1)
+    
+    print("=== CEREBRO NIFTI UPLOAD ===")
+    print(f"Uploading NIFTI file: {args.nifti_file}")
+    print("This will upload your brain scan and prepare it for analysis...")
+    print("Please wait, this may take 30-60 seconds...\n")
+    
+    try:
+        res = upload_nifti(args.nifti_file, None, args.public_id)
+        
+        print("upload_nifti result:")
+        print(res)
+        
+        print("\n=== UPLOAD COMPLETE ===")
+        print("IMPORTANT: Save these IDs for the next steps!")
+        print(f"📋 Main file ID: {res[0]['id']}")
+        print(f"👤 User ID: {res[0]['user_id']}")
+        print("\nNext steps:")
+        print("1. Copy the Main file ID above")
+        print("2. Run atlas resampling:")
+        print(f"   python -m functions.resample_atlas_for_user_nifti {res[0]['id']}")
+        print("3. Run volume calculation:")
+        print(f"   python -m functions.calculate_roi_volumes {res[0]['id']}")
+        
+    except Exception as e:
+        print(f"❌ Error during upload: {str(e)}")
+        print("Please check your file and try again.")
+        os._exit(1)
+    
+    os._exit(0)
