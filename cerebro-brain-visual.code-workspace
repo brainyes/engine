@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../cerebro4"
+		},
+		{
+			"path": "../cerebro-oasis-test"
 		}
 	],
 	"settings": {}

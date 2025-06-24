@@ -38,12 +38,12 @@ The system uses centralized path configuration:
 
 ```python
 # Base directories
-dataset_dir = 'research/input'          # All scientific data
-output_dir = 'research/output'          # Processing results
+dataset_dir = '../research/input'  # All scientific data
+output_dir = '../research/output'  # Processing results
 
 # Specific file paths
-atlas_file_path = 'research/input/HarvardOxford-cort-maxprob-thr25-2mm.nii.gz'
-oasis_bids_tsv_path = 'research/input/tsv_files/lab_1/OASIS_BIDS.tsv'
+atlas_file_path = '../research/input/HarvardOxford-cort-maxprob-thr25-2mm.nii.gz'
+oasis_bids_tsv_path = '../research/input/tsv_files/lab_1/OASIS_BIDS.tsv'
 ```
 
 ## 🧠 Data Types
