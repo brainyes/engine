@@ -1,5 +1,7 @@
 # Cerebro engine
 
+## Infinitely scalable MRI processing engine
+
 Run engine API:
 ```
 (INNGEST_DEV=1 uvicorn server:app --reload)
