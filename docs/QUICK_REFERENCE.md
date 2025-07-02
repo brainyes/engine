@@ -1,5 +1,14 @@
 # Quick Reference - Cerebro Backend
 
+
+```bash
+python -m functions.upload_nifti research/input/sub-OASIS10001_ses-M00_T1w.nii.gz 
+
+python -m functions.calculate_roi_volumes d7db5b0a-d967-4dcc-9c7d-43d8d4a48dc9
+ 
+python -m functions.population_analysis_todo
+```
+
 ## Essential Commands (Copy & Paste)
 
 ### 1. Activate Environment
