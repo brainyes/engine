@@ -10,3 +10,6 @@ fastapi
 inngest
 uvicorn
 psutil
+boto3
+aws-lambda-powertools
+python-dotenv

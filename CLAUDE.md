@@ -17,7 +17,6 @@ npx inngest-cli@latest dev -u http://127.0.0.1:8000/api/inngest --no-discovery
 ```bash
 # Install dependencies
 pip install -r requirements.txt
-pip install -r requirements.dev.txt  # if available
 
 # Run individual functions directly
 python -m functions.function_name FILE_ID
@@ -48,11 +47,6 @@ python -m functions.function_name --help
 - Functions can run standalone via CLI or through Inngest orchestration
 - All functions use standardized utilities for database and file operations
 
-**2. Inngest Orchestration System**
-- `server.py` - FastAPI server that serves Inngest endpoints
-- `utilities/inngest.py` - Inngest client configuration
-- Functions auto-register with Inngest using decorators
-- Event-driven architecture for chaining processing steps
 
 **3. Data Management**
 - `utilities/data.py` - Supabase database connection

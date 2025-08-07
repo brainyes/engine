@@ -1,0 +1,45 @@
+# Use AWS Lambda Python base image
+FROM public.ecr.aws/lambda/python:3.9
+
+# Install system dependencies needed for FreeSurfer and neuroimaging libraries
+RUN yum update -y && \
+    yum install -y \
+    mesa-libGL \
+    mesa-libGLU \
+    libXext \
+    libSM \
+    libXrender \
+    libgomp \
+    wget \
+    tar \
+    && yum clean all \
+    && rm -rf /var/cache/yum
+
+# Install FreeSurfer dependencies and create placeholder
+# Note: For production, download and install actual FreeSurfer
+RUN mkdir -p /usr/local/freesurfer && \
+    echo "FreeSurfer placeholder - replace with actual installation" > /usr/local/freesurfer/README
+
+# Set FreeSurfer environment variables
+ENV FREESURFER_HOME=/usr/local/freesurfer
+ENV PATH=$FREESURFER_HOME/bin:$PATH
+ENV FS_LICENSE=$FREESURFER_HOME/license.txt
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt ${LAMBDA_TASK_ROOT}/
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
+
+# Copy application code
+COPY functions/ ${LAMBDA_TASK_ROOT}/functions/
+COPY utilities/ ${LAMBDA_TASK_ROOT}/utilities/
+COPY insights/ ${LAMBDA_TASK_ROOT}/insights/
+COPY handlers/ ${LAMBDA_TASK_ROOT}/handlers/
+
+# Copy .env if exists (for local testing)
+COPY .env* ${LAMBDA_TASK_ROOT}/
+
+# Set Python path to include Lambda task root
+ENV PYTHONPATH=${LAMBDA_TASK_ROOT}:${PYTHONPATH}
+
+# Default handler (can be overridden in template.yaml)
+CMD ["handlers.lambda_handlers.generic_function_handler"]

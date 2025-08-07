@@ -1,0 +1,480 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Cerebro Engine Serverless Architecture with Docker
+
+Globals:
+  Function:
+    Timeout: 900  # 15 minutes max for Lambda
+    MemorySize: 3008  # Max memory for better performance with scientific computing
+    Environment:
+      Variables:
+        SUPABASE_URL: !Ref SupabaseUrl
+        SUPABASE_KEY: !Ref SupabaseKey
+        TASK_QUEUE_URL: !Ref TaskQueue
+
+Parameters:
+  SupabaseUrl:
+    Type: String
+    Description: Supabase project URL
+    NoEcho: true
+  
+  SupabaseKey:
+    Type: String
+    Description: Supabase service role key
+    NoEcho: true
+  
+  ECSImageUri:
+    Type: String
+    Description: ECR image URI for ECS tasks (same as Lambda image)
+    Default: ""
+
+Resources:
+
+  # Minimal VPC with public subnets only (no NAT Gateway = free)
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: cerebro-vpc
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: cerebro-igw
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnets (2 AZs for ECS)
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: cerebro-public-subnet-1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: cerebro-public-subnet-2
+
+  # Route Table for Public Subnets
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: cerebro-public-routes
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # Private Subnets (for RDS, ElastiCache, etc. - no internet access)
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: cerebro-private-subnet-1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.12.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: cerebro-private-subnet-2
+
+  # Private Route Table (no internet route = no NAT Gateway needed)
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: cerebro-private-routes
+
+  PrivateSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Group for ECS Tasks (minimal - allow outbound only)
+  EcsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks in public subnets
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: cerebro-ecs-sg
+
+  # API Gateway
+  CerebroApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowMethods: "'*'"
+        AllowHeaders: "'*'"
+        AllowOrigin: "'*'"
+
+  # Generic Function Handler (Docker)
+  GenericFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageConfig:
+        Command: ["handlers.lambda_handlers.generic_function_handler"]
+      Architectures:
+        - x86_64
+      Events:
+        PostApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /function/{function_name}
+            Method: POST
+        PostApiRoot:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /function
+            Method: POST
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: ./
+      DockerTag: latest
+
+  # Async Task Handler (Docker)
+  AsyncTaskFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageConfig:
+        Command: ["handlers.lambda_handlers.async_task_handler"]
+      Architectures:
+        - x86_64
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt TaskQueue.QueueName
+      Events:
+        SubmitTask:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /async/{function_name}
+            Method: POST
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: ./
+      DockerTag: latest
+
+  # List Functions Handler (Docker)
+  ListFunctionsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageConfig:
+        Command: ["handlers.lambda_handlers.list_functions_handler"]
+      Architectures:
+        - x86_64
+      Events:
+        ListFunctions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /functions
+            Method: GET
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: ./
+      DockerTag: latest
+
+  # Get Task Status Handler (Docker)
+  GetTaskStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageConfig:
+        Command: ["handlers.lambda_handlers.get_task_status_handler"]
+      Architectures:
+        - x86_64
+      Events:
+        GetTaskStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /tasks/{task_id}/status
+            Method: GET
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: ./
+      DockerTag: latest
+
+  # Get Task Logs Handler (Docker)
+  GetTaskLogsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageConfig:
+        Command: ["handlers.lambda_handlers.get_task_logs_handler"]
+      Architectures:
+        - x86_64
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:GetLogEvents
+                - logs:FilterLogEvents
+              Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/cerebro-task:*'
+      Events:
+        GetTaskLogs:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /tasks/{task_id}/logs
+            Method: GET
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: ./
+      DockerTag: latest
+
+  # SQS Queue for async tasks
+  TaskQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: cerebro-task-queue
+      VisibilityTimeout: 43200  # 12 hours (must be >= ECS task timeout)
+      MessageRetentionPeriod: 1209600  # 14 days
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: cerebro-task-dlq
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # ECS Resources (same as before)
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: cerebro-cluster
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+
+  EcsTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: cerebro-task
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '2048'  # 2 vCPU
+      Memory: '8192'  # 8 GB RAM
+      ExecutionRoleArn: !Ref EcsExecutionRole
+      TaskRoleArn: !Ref EcsTaskRole
+      ContainerDefinitions:
+        - Name: cerebro-container
+          Image: !Ref ECSImageUri
+          Essential: true
+          Environment:
+            - Name: SUPABASE_URL
+              Value: !Ref SupabaseUrl
+            - Name: SUPABASE_KEY
+              Value: !Ref SupabaseKey
+            - Name: TASK_QUEUE_URL
+              Value: !Ref TaskQueue
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref EcsLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  EcsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/cerebro-task
+      RetentionInDays: 30
+
+  # IAM Roles
+  EcsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt TaskQueue.Arn
+
+  # EventBridge Pipe to trigger ECS tasks from SQS
+  SqsToEcsPipe:
+    Type: AWS::Pipes::Pipe
+    Properties:
+      Name: cerebro-sqs-to-ecs-pipe
+      Description: Trigger ECS task when message arrives in SQS
+      RoleArn: !GetAtt PipeRole.Arn
+      Source: !GetAtt TaskQueue.Arn
+      SourceParameters:
+        SqsQueueParameters:
+          BatchSize: 1
+      Target: !GetAtt EcsCluster.Arn
+      TargetParameters:
+        EcsTaskParameters:
+          TaskDefinitionArn: !Ref EcsTaskDefinition
+          LaunchType: FARGATE
+          NetworkConfiguration:
+            AwsvpcConfiguration:
+              Subnets:
+                - !Ref PublicSubnet1
+                - !Ref PublicSubnet2
+              SecurityGroups:
+                - !Ref EcsSecurityGroup
+              AssignPublicIp: ENABLED
+
+  PipeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: pipes.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SqsSource
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt TaskQueue.Arn
+        - PolicyName: EcsTarget
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:RunTask
+                Resource: !Ref EcsTaskDefinition
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt EcsExecutionRole.Arn
+                  - !GetAtt EcsTaskRole.Arn
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${CerebroApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+  
+  TaskQueueUrl:
+    Description: SQS Queue URL for async tasks
+    Value: !Ref TaskQueue
+  
+  ECSImageUri:
+    Description: ECS container image URI parameter
+    Value: !Ref ECSImageUri

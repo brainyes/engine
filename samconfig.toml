@@ -1,0 +1,19 @@
+version = 0.1
+
+[default.build.parameters]
+cached = true
+parallel = true
+use_container = true
+
+[default.deploy.parameters]
+stack_name = "cerebro-engine"
+region = "us-east-2"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+resolve_image_repos = true
+s3_prefix = "cerebro-engine"
+profile = "brainyes"
+
+[default.local_invoke.parameters]
+env_vars = "env.json"

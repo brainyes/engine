@@ -57,10 +57,13 @@ def download_nifti_file(nifti_file = None, storage_object = None):
     return save_to_temp_file(nifti_gz_data, storage_object['name'])
 
 def get_user_meta(user_id, meta_key):
-    return cast_value((supabase.schema("public").table("usermeta")
+    meta_value = (supabase.schema("public").table("usermeta")
             .select("meta_value")
             .eq("user_id", user_id).eq("meta_key", meta_key)
-            .maybe_single().execute()).data['meta_value'])
+            .maybe_single().execute())
+    if meta_value:
+        return cast_value(meta_value.data['meta_value'])
+    return None
 
 def get_roi_volumes(nifti_file_id):
     response = supabase.schema("public").table("roi_volumes").select("*").eq("nifti_file_id", nifti_file_id).execute()

@@ -2,6 +2,7 @@ import inngest
 import numpy as np
 import nibabel as nib
 import argparse
+import os
 
 from utilities.inngest import client as inngest_client
 from utilities.data import supabase
@@ -24,6 +25,8 @@ def calculate_roi_volumes(nifti_file_id):
     atlas_sampled_nifti = nib.load(atlas_sampled_nifti_gz_path)
 
     voxel_size = get_user_meta(atlas_sampled_nifti_file['user_id'], 'voxel_size')
+    if voxel_size is None:
+        raise Exception("User's voxel size was not determined.")
 
     data = user_nifti.get_fdata()
     roi_volumes = {}

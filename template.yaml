@@ -1,0 +1,397 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Cerebro Engine Serverless Architecture
+
+Globals:
+  Function:
+    Timeout: 900  # 15 minutes max for Lambda
+    Runtime: python3.9
+    MemorySize: 512  # Increase memory to 512 MB
+    Environment:
+      Variables:
+        SUPABASE_URL: !Ref SupabaseUrl
+        SUPABASE_KEY: !Ref SupabaseKey
+        TASK_QUEUE_URL: !Ref TaskQueue
+
+Parameters:
+  SupabaseUrl:
+    Type: String
+    Description: Supabase project URL
+    NoEcho: true
+  
+  SupabaseKey:
+    Type: String
+    Description: Supabase service role key
+    NoEcho: true
+  
+  EcrRepository:
+    Type: String
+    Description: ECR repository URI for the Docker image
+    Default: ""
+
+Resources:
+  # API Gateway
+  CerebroApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowMethods: "'*'"
+        AllowHeaders: "'*'"
+        AllowOrigin: "'*'"
+
+  # Lambda Layer for dependencies
+  DependenciesLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: cerebro-dependencies
+      Description: Python dependencies for Cerebro Engine
+      ContentUri: layer/
+      CompatibleRuntimes:
+        - python3.9
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: python3.9
+      BuildProperties:
+        RequirementsFile: layer/requirements.txt
+
+  # Lambda Functions
+  GenericFunctionHandler:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.lambda_handlers.generic_function_handler
+      Layers:
+        - !Ref DependenciesLayer
+      Events:
+        ApiEventPath:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /api/function/{function_name}
+            Method: POST
+        ApiEventBody:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /api/function
+            Method: POST
+    Metadata:
+      BuildMethod: python3.9
+      BuildProperties:
+        RequirementsFile: empty-requirements.txt
+
+  ListFunctionsHandler:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.lambda_handlers.list_functions_handler
+      Layers:
+        - !Ref DependenciesLayer
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /api/functions
+            Method: GET
+    Metadata:
+      BuildMethod: python3.9
+      BuildProperties:
+        RequirementsFile: empty-requirements.txt
+
+  AsyncTaskFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.lambda_handlers.async_task_handler
+      Layers:
+        - !Ref DependenciesLayer
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt TaskQueue.QueueName
+      Events:
+        ApiEventPath:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /api/async/{function_name}
+            Method: POST
+        ApiEventBody:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /api/async
+            Method: POST
+    Metadata:
+      BuildMethod: python3.9
+      BuildProperties:
+        RequirementsFile: empty-requirements.txt
+
+  GetTaskStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.lambda_handlers.get_task_status_handler
+      Layers:
+        - !Ref DependenciesLayer
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /api/tasks/{task_id}/status
+            Method: GET
+    Metadata:
+      BuildMethod: python3.9
+      BuildProperties:
+        RequirementsFile: empty-requirements.txt
+
+  GetTaskLogsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.lambda_handlers.get_task_logs_handler
+      Layers:
+        - !Ref DependenciesLayer
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:GetLogEvents
+                - logs:FilterLogEvents
+              Resource: '*'
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CerebroApi
+            Path: /api/tasks/{task_id}/logs
+            Method: GET
+    Metadata:
+      BuildMethod: python3.9
+      BuildProperties:
+        RequirementsFile: empty-requirements.txt
+
+  # SQS Queue for async tasks
+  TaskQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: cerebro-task-queue
+      VisibilityTimeout: 43200  # 12 hours for long-running tasks
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # Dead Letter Queue
+  TaskDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: cerebro-task-dlq
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: cerebro-cluster
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE_SPOT
+          Weight: 2
+        - CapacityProvider: FARGATE
+          Weight: 1
+
+  # ECS Task Definition
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: cerebro-task
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '4096'  # 4 vCPU
+      Memory: '30720'  # 30 GB RAM for FreeSurfer
+      ExecutionRoleArn: !Ref ECSExecutionRole
+      TaskRoleArn: !Ref ECSTaskRole
+      ContainerDefinitions:
+        - Name: cerebro-worker
+          Image: !Ref EcrRepository
+          Essential: true
+          Environment:
+            - Name: SUPABASE_URL
+              Value: !Ref SupabaseUrl
+            - Name: SUPABASE_KEY
+              Value: !Ref SupabaseKey
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: TASK_QUEUE_URL
+              Value: !Ref TaskQueue
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: cerebro-task
+
+  # CloudWatch Log Group
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/cerebro-tasks
+      RetentionInDays: 30
+
+  # IAM Roles
+  ECSExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TaskPolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt TaskQueue.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt LogGroup.Arn
+
+  # EventBridge Rule to trigger ECS tasks from SQS
+  ProcessTaskRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: cerebro-process-task
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.sqs
+        detail-type:
+          - SQS Message Arrival
+        resources:
+          - !GetAtt TaskQueue.Arn
+      Targets:
+        - Arn: !GetAtt ECSCluster.Arn
+          RoleArn: !GetAtt EventBridgeExecutionRole.Arn
+          EcsParameters:
+            TaskDefinitionArn: !Ref TaskDefinition
+            LaunchType: FARGATE
+            NetworkConfiguration:
+              AwsvpcConfiguration:
+                Subnets:
+                  - !Ref PrivateSubnet1
+                  - !Ref PrivateSubnet2
+                SecurityGroups:
+                  - !Ref ECSSecurityGroup
+                AssignPublicIp: ENABLED
+
+  EventBridgeExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ECSTaskExecutionPolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:RunTask
+                Resource: !Ref TaskDefinition
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt ECSExecutionRole.Arn
+                  - !GetAtt ECSTaskRole.Arn
+
+  # VPC Configuration (simplified)
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # SNS Topic for notifications
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: cerebro-notifications
+      DisplayName: Cerebro Task Notifications
+
+  NotificationTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref NotificationTopic
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref NotificationTopic
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${CerebroApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+  
+  TaskQueueUrl:
+    Description: SQS Queue URL for async tasks
+    Value: !Ref TaskQueue
+  
+  NotificationTopicArn:
+    Description: SNS Topic ARN for notifications
+    Value: !Ref NotificationTopic
