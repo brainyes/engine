@@ -1,12 +1,12 @@
 # Use Ubuntu as base for FreeSurfer compatibility
-FROM ubuntu:20.04
+FROM ubuntu:24.04
 
 # Prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.9 \
+    python3.12 \
     python3-pip \
     wget \
     curl \
@@ -18,18 +18,20 @@ RUN apt-get update && apt-get install -y \
     libxt6 \
     libxcomposite1 \
     libfreetype6 \
-    libjpeg62 \
-    libtiff5 \
+    libjpeg62-dev \
+    libtiff6 \
     libpng16-16 \
     libxcursor1 \
     libxinerama1 \
     libxrandr2 \
     libxss1 \
-    libxt6 \
     libxv1 \
     libgdk-pixbuf2.0-0 \
-    libgtk2.0-0 \
+    libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
+
+# Install python3-venv and setuptools for virtual environment support
+RUN apt-get update && apt-get install -y python3.12-venv python3-setuptools && rm -rf /var/lib/apt/lists/*
 
 # Install FreeSurfer (using a minimal version for faster builds)
 # Note: In production, you should use the full FreeSurfer installation
@@ -48,8 +50,10 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Create virtual environment and install Python dependencies
+RUN python3.12 -m venv /app/venv
+ENV PATH="/app/venv/bin:$PATH"
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY functions/ ./functions/
@@ -59,8 +63,8 @@ COPY handlers/ ./handlers/
 COPY .env .env
 
 # Create a non-root user
-RUN useradd -m -s /bin/bash cerebro
-USER cerebro
+RUN useradd -m -s /bin/bash brainyes
+USER brainyes
 
 # Set the entrypoint
-ENTRYPOINT ["python3", "handlers/ecs_handler.py"]
+ENTRYPOINT ["python3.12", "handlers/ecs_handler.py"]

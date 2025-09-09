@@ -1,6 +1,6 @@
-# Cerebro Engine Serverless Deployment Guide
+# BrainYes Engine Serverless Deployment Guide
 
-This guide explains how to deploy the Cerebro Engine using AWS SAM with Lambda functions for quick operations and ECS Fargate for long-running tasks.
+This guide explains how to deploy the BrainYes Engine using AWS SAM with Lambda functions for quick operations and ECS Fargate for long-running tasks.
 
 ## Architecture Overview
 
@@ -52,19 +52,22 @@ sam local start-api --warm-containers eager --env-vars env.json
 docker build -t cerebro-engine .
 
 # Create ECR repository
-aws ecr create-repository --repository-name cerebro-engine
+aws ecr create-repository --repository-name brainyes-engine
 
 # Get login token
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin [your-account-id].dkr.ecr.us-east-1.amazonaws.com
+aws ecr get-login-password --profile brainyes --region us-east-2 | docker login --username AWS --password-stdin <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com
 
 # Tag and push image
-docker tag cerebro-engine:latest [your-account-id].dkr.ecr.us-east-1.amazonaws.com/cerebro-engine:latest
-docker push [your-account-id].dkr.ecr.us-east-1.amazonaws.com/cerebro-engine:latest
+docker tag brainyes-engine:latest <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/brainyes-engine:latest
+docker push <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/brainyes-engine:latest
 ```
 
 ### 5. Deploy with SAM
 
 ```bash
+# On Mac, SAM CLI needs this environment variable...
+export DOCKER_HOST=$(docker context inspect | jq -r '.[0].Endpoints.docker.Host')
+
 # Build the SAM application
 sam build --profile brainyes --template-file template-docker.yaml
 
@@ -78,15 +81,26 @@ sam deploy --profile brainyes --guided \
 # Or
 sam deploy --profile brainyes  \
     --parameter-overrides \
-        ECSImageUri="<AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/cerebroengine83343cc2/genericfunctionacc17b80repo:genericfunction-568dd6f28dc4-latest" \
+        ECSImageUri="<AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/engine" \
         SupabaseUrl="${SUPABASE_URL}" \
         SupabaseKey="${SUPABASE_KEY}" 
+# Or
+sam deploy --profile brainyes
 
 # Subsequent deployments (after building with --template-file template-docker.yaml)
 sam deploy --profile brainyes 
 ```
 
 `samconfig.toml ` file contains some default for your `sam` commands. Especially  `image_repository` may be different than what happened in `sam deploy` commands.
+
+### 6. Deploy the CI/CD pipeline infrastructure
+If you are starting a new AWS environment from scratch, you probably want to run this first to create ECR images.
+
+```
+sam deploy --profile brainyes -t codepipeline.yaml --parameter-overrides SupabaseUrl="${SUPABASE_URL}" SupabaseKey="${SUPABASE_KEY}" --stack-name brainyes-engine-pipeline-stacksam
+```
+
+CodeBuild will use `buildspec*.yml` files in `./pipeline/` directory.
 
 ## API Endpoints
 
@@ -186,7 +200,7 @@ GET /api/tasks/{task_id}/status
 GET /api/tasks/{task_id}/logs
 ```
 
-## Using from Cerebro App
+## Using from BrainYes App
 
 ### Synchronous Call Example (TypeScript)
 ```typescript
@@ -276,8 +290,8 @@ console.log('Available functions:', functions);
 ## Monitoring
 
 ### CloudWatch Logs
-- Lambda logs: `/aws/lambda/cerebro-*`
-- ECS logs: `/ecs/cerebro-tasks`
+- Lambda logs: `/aws/lambda/brainyes-*`
+- ECS logs: `/ecs/brainyes-tasks`
 
 ### Task Status in Supabase
 ```sql
@@ -332,4 +346,3 @@ Configure email notifications by subscribing to the SNS topic created by the sta
 2. Add more long-running functions
 3. Implement CloudWatch log streaming to UI
 4. Add more granular IAM permissions
-5. Set up CI/CD pipeline

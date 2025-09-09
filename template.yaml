@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Cerebro Engine Serverless Architecture
+Description: BrainYes Engine Serverless Architecture
 
 Globals:
   Function:
@@ -31,7 +31,7 @@ Parameters:
 
 Resources:
   # API Gateway
-  CerebroApi:
+  BrainYesApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: prod
@@ -44,8 +44,8 @@ Resources:
   DependenciesLayer:
     Type: AWS::Serverless::LayerVersion
     Properties:
-      LayerName: cerebro-dependencies
-      Description: Python dependencies for Cerebro Engine
+      LayerName: brainyes-dependencies
+      Description: Python dependencies for BrainYes Engine
       ContentUri: layer/
       CompatibleRuntimes:
         - python3.9
@@ -67,13 +67,13 @@ Resources:
         ApiEventPath:
           Type: Api
           Properties:
-            RestApiId: !Ref CerebroApi
+            RestApiId: !Ref BrainYesApi
             Path: /api/function/{function_name}
             Method: POST
         ApiEventBody:
           Type: Api
           Properties:
-            RestApiId: !Ref CerebroApi
+            RestApiId: !Ref BrainYesApi
             Path: /api/function
             Method: POST
     Metadata:
@@ -92,7 +92,7 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref CerebroApi
+            RestApiId: !Ref BrainYesApi
             Path: /api/functions
             Method: GET
     Metadata:
@@ -114,13 +114,13 @@ Resources:
         ApiEventPath:
           Type: Api
           Properties:
-            RestApiId: !Ref CerebroApi
+            RestApiId: !Ref BrainYesApi
             Path: /api/async/{function_name}
             Method: POST
         ApiEventBody:
           Type: Api
           Properties:
-            RestApiId: !Ref CerebroApi
+            RestApiId: !Ref BrainYesApi
             Path: /api/async
             Method: POST
     Metadata:
@@ -139,7 +139,7 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref CerebroApi
+            RestApiId: !Ref BrainYesApi
             Path: /api/tasks/{task_id}/status
             Method: GET
     Metadata:
@@ -166,7 +166,7 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref CerebroApi
+            RestApiId: !Ref BrainYesApi
             Path: /api/tasks/{task_id}/logs
             Method: GET
     Metadata:
@@ -178,7 +178,7 @@ Resources:
   TaskQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: cerebro-task-queue
+      QueueName: brainyes-task-queue
       VisibilityTimeout: 43200  # 12 hours for long-running tasks
       MessageRetentionPeriod: 1209600  # 14 days
 
@@ -186,14 +186,14 @@ Resources:
   TaskDLQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: cerebro-task-dlq
+      QueueName: brainyes-task-dlq
       MessageRetentionPeriod: 1209600  # 14 days
 
   # ECS Cluster
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: cerebro-cluster
+      ClusterName: brainyes-cluster
       CapacityProviders:
         - FARGATE
         - FARGATE_SPOT
@@ -207,7 +207,7 @@ Resources:
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: cerebro-task
+      Family: brainyes-task
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
@@ -216,7 +216,7 @@ Resources:
       ExecutionRoleArn: !Ref ECSExecutionRole
       TaskRoleArn: !Ref ECSTaskRole
       ContainerDefinitions:
-        - Name: cerebro-worker
+        - Name: brainyes-worker
           Image: !Ref EcrRepository
           Essential: true
           Environment:
@@ -233,13 +233,13 @@ Resources:
             Options:
               awslogs-group: !Ref LogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: cerebro-task
+              awslogs-stream-prefix: brainyes-task
 
   # CloudWatch Log Group
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /ecs/cerebro-tasks
+      LogGroupName: /ecs/brainyes-tasks
       RetentionInDays: 30
 
   # IAM Roles
@@ -284,7 +284,7 @@ Resources:
   ProcessTaskRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: cerebro-process-task
+      Name: brainyes-process-task
       State: ENABLED
       EventPattern:
         source:
@@ -367,8 +367,8 @@ Resources:
   NotificationTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: cerebro-notifications
-      DisplayName: Cerebro Task Notifications
+      TopicName: brainyes-notifications
+      DisplayName: BrainYes Task Notifications
 
   NotificationTopicPolicy:
     Type: AWS::SNS::TopicPolicy
@@ -386,7 +386,7 @@ Resources:
 Outputs:
   ApiUrl:
     Description: API Gateway endpoint URL
-    Value: !Sub 'https://${CerebroApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Value: !Sub 'https://${BrainYesApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
   
   TaskQueueUrl:
     Description: SQS Queue URL for async tasks

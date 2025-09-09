@@ -6,14 +6,15 @@ parallel = true
 use_container = true
 
 [default.deploy.parameters]
-stack_name = "cerebro-engine"
+stack_name = "brainyes-engine"
 region = "us-east-2"
 confirm_changeset = true
 capabilities = "CAPABILITY_IAM"
 resolve_s3 = true
-resolve_image_repos = true
-s3_prefix = "cerebro-engine"
+s3_prefix = "brainyes-engine"
 profile = "brainyes"
+image_repository = "<AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/lambda"
+parameter_overrides = "SupabaseUrl=\"https://<your-project>.supabase.co\" SupabaseKey=\"<REDACTED_SUPABASE_KEY>\" ECSImageUri=\"<AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/engine:latest\""
 
 [default.local_invoke.parameters]
 env_vars = "env.json"

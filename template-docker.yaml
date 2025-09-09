@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Cerebro Engine Serverless Architecture with Docker
+Description: BrainYes Engine Serverless Architecture with Docker
 
 Globals:
   Function:
@@ -39,7 +39,7 @@ Resources:
       EnableDnsSupport: true
       Tags:
         - Key: Name
-          Value: cerebro-vpc
+          Value: brainyes-vpc
 
   # Internet Gateway
   InternetGateway:
@@ -47,7 +47,7 @@ Resources:
     Properties:
       Tags:
         - Key: Name
-          Value: cerebro-igw
+          Value: brainyes-igw
 
   AttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -65,7 +65,7 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: cerebro-public-subnet-1
+          Value: brainyes-public-subnet-1
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
@@ -76,7 +76,7 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: cerebro-public-subnet-2
+          Value: brainyes-public-subnet-2
 
   # Route Table for Public Subnets
   PublicRouteTable:
@@ -85,7 +85,7 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: cerebro-public-routes
+          Value: brainyes-public-routes
 
   PublicRoute:
     Type: AWS::EC2::Route
@@ -116,7 +116,7 @@ Resources:
       AvailabilityZone: !Select [0, !GetAZs '']
       Tags:
         - Key: Name
-          Value: cerebro-private-subnet-1
+          Value: brainyes-private-subnet-1
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
@@ -126,7 +126,7 @@ Resources:
       AvailabilityZone: !Select [1, !GetAZs '']
       Tags:
         - Key: Name
-          Value: cerebro-private-subnet-2
+          Value: brainyes-private-subnet-2
 
   # Private Route Table (no internet route = no NAT Gateway needed)
   PrivateRouteTable:
@@ -135,7 +135,7 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: cerebro-private-routes
+          Value: brainyes-private-routes
 
   PrivateSubnetRouteTableAssociation1:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -160,10 +160,10 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: cerebro-ecs-sg
+          Value: brainyes-ecs-sg
 
   # API Gateway
-  CerebroApi:
+  BrainYesApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: prod
@@ -172,121 +172,63 @@ Resources:
         AllowHeaders: "'*'"
         AllowOrigin: "'*'"
 
-  # Generic Function Handler (Docker)
-  GenericFunction:
+  # Single Lambda Function with API Gateway routing
+  BrainYesFunction:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
       ImageConfig:
-        Command: ["handlers.lambda_handlers.generic_function_handler"]
-      Architectures:
-        - x86_64
-      Events:
-        PostApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref CerebroApi
-            Path: /function/{function_name}
-            Method: POST
-        PostApiRoot:
-          Type: Api
-          Properties:
-            RestApiId: !Ref CerebroApi
-            Path: /function
-            Method: POST
-    Metadata:
-      Dockerfile: Dockerfile.lambda
-      DockerContext: ./
-      DockerTag: latest
-
-  # Async Task Handler (Docker)
-  AsyncTaskFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      PackageType: Image
-      ImageConfig:
-        Command: ["handlers.lambda_handlers.async_task_handler"]
+        Command: ["handlers.lambda_handlers.router_handler"]
       Architectures:
         - x86_64
       Policies:
         - SQSSendMessagePolicy:
             QueueName: !GetAtt TaskQueue.QueueName
-      Events:
-        SubmitTask:
-          Type: Api
-          Properties:
-            RestApiId: !Ref CerebroApi
-            Path: /async/{function_name}
-            Method: POST
-    Metadata:
-      Dockerfile: Dockerfile.lambda
-      DockerContext: ./
-      DockerTag: latest
-
-  # List Functions Handler (Docker)
-  ListFunctionsFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      PackageType: Image
-      ImageConfig:
-        Command: ["handlers.lambda_handlers.list_functions_handler"]
-      Architectures:
-        - x86_64
-      Events:
-        ListFunctions:
-          Type: Api
-          Properties:
-            RestApiId: !Ref CerebroApi
-            Path: /functions
-            Method: GET
-    Metadata:
-      Dockerfile: Dockerfile.lambda
-      DockerContext: ./
-      DockerTag: latest
-
-  # Get Task Status Handler (Docker)
-  GetTaskStatusFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      PackageType: Image
-      ImageConfig:
-        Command: ["handlers.lambda_handlers.get_task_status_handler"]
-      Architectures:
-        - x86_64
-      Events:
-        GetTaskStatus:
-          Type: Api
-          Properties:
-            RestApiId: !Ref CerebroApi
-            Path: /tasks/{task_id}/status
-            Method: GET
-    Metadata:
-      Dockerfile: Dockerfile.lambda
-      DockerContext: ./
-      DockerTag: latest
-
-  # Get Task Logs Handler (Docker)
-  GetTaskLogsFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      PackageType: Image
-      ImageConfig:
-        Command: ["handlers.lambda_handlers.get_task_logs_handler"]
-      Architectures:
-        - x86_64
-      Policies:
         - Version: '2012-10-17'
           Statement:
             - Effect: Allow
               Action:
                 - logs:GetLogEvents
                 - logs:FilterLogEvents
-              Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/cerebro-task:*'
+              Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/brainyes-task:*'
       Events:
+        # Function execution endpoints
+        PostFunction:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BrainYesApi
+            Path: /function/{function_name}
+            Method: POST
+        PostFunctionRoot:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BrainYesApi
+            Path: /function
+            Method: POST
+        # Async task endpoints
+        SubmitAsyncTask:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BrainYesApi
+            Path: /async/{function_name}
+            Method: POST
+        # Management endpoints
+        ListFunctions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BrainYesApi
+            Path: /functions
+            Method: GET
+        GetTaskStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BrainYesApi
+            Path: /tasks/{task_id}/status
+            Method: GET
         GetTaskLogs:
           Type: Api
           Properties:
-            RestApiId: !Ref CerebroApi
+            RestApiId: !Ref BrainYesApi
             Path: /tasks/{task_id}/logs
             Method: GET
     Metadata:
@@ -298,7 +240,7 @@ Resources:
   TaskQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: cerebro-task-queue
+      QueueName: brainyes-task-queue
       VisibilityTimeout: 43200  # 12 hours (must be >= ECS task timeout)
       MessageRetentionPeriod: 1209600  # 14 days
       RedrivePolicy:
@@ -308,14 +250,14 @@ Resources:
   DeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: cerebro-task-dlq
+      QueueName: brainyes-task-dlq
       MessageRetentionPeriod: 1209600  # 14 days
 
   # ECS Resources (same as before)
   EcsCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: cerebro-cluster
+      ClusterName: brainyes-cluster
       CapacityProviders:
         - FARGATE
         - FARGATE_SPOT
@@ -323,7 +265,7 @@ Resources:
   EcsTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: cerebro-task
+      Family: brainyes-task
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
@@ -332,7 +274,7 @@ Resources:
       ExecutionRoleArn: !Ref EcsExecutionRole
       TaskRoleArn: !Ref EcsTaskRole
       ContainerDefinitions:
-        - Name: cerebro-container
+        - Name: brainyes-container
           Image: !Ref ECSImageUri
           Essential: true
           Environment:
@@ -354,7 +296,7 @@ Resources:
   EcsLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /ecs/cerebro-task
+      LogGroupName: /ecs/brainyes-task
       RetentionInDays: 30
 
   # IAM Roles
@@ -409,7 +351,7 @@ Resources:
   SqsToEcsPipe:
     Type: AWS::Pipes::Pipe
     Properties:
-      Name: cerebro-sqs-to-ecs-pipe
+      Name: brainyes-sqs-to-ecs-pipe
       Description: Trigger ECS task when message arrives in SQS
       RoleArn: !GetAtt PipeRole.Arn
       Source: !GetAtt TaskQueue.Arn
@@ -469,7 +411,7 @@ Resources:
 Outputs:
   ApiUrl:
     Description: API Gateway endpoint URL
-    Value: !Sub 'https://${CerebroApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Value: !Sub 'https://${BrainYesApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
   
   TaskQueueUrl:
     Description: SQS Queue URL for async tasks

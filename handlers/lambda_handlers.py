@@ -302,3 +302,43 @@ def get_task_logs_handler(event, context):
             'success': False,
             'error': str(e)
         })
+
+def router_handler(event, context):
+    """Single router handler that routes requests to appropriate functionality"""
+    try:
+        # Get the resource path to determine which handler to use
+        path = event.get('resource', '')
+        method = event.get('httpMethod', '')
+        
+        print(f"Router received: {method} {path}")
+        
+        # Route based on path and method
+        if path == '/functions' and method == 'GET':
+            return list_functions_handler(event, context)
+        elif path in ['/function', '/function/{function_name}'] and method == 'POST':
+            return generic_function_handler(event, context)
+        elif path == '/async/{function_name}' and method == 'POST':
+            return async_task_handler(event, context)
+        elif path == '/tasks/{task_id}/status' and method == 'GET':
+            return get_task_status_handler(event, context)
+        elif path == '/tasks/{task_id}/logs' and method == 'GET':
+            return get_task_logs_handler(event, context)
+        else:
+            return create_response(404, {
+                'success': False,
+                'error': f'Route not found: {method} {path}',
+                'available_routes': [
+                    'GET /functions',
+                    'POST /function',
+                    'POST /function/{function_name}',
+                    'POST /async/{function_name}',
+                    'GET /tasks/{task_id}/status',
+                    'GET /tasks/{task_id}/logs'
+                ]
+            })
+            
+    except Exception as e:
+        return create_response(500, {
+            'success': False,
+            'error': f'Router error: {str(e)}'
+        })
