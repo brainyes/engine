@@ -32,7 +32,7 @@ Parameters:
     Default: "GitHub"
   FullRepositoryId:
     Type: String
-    Default: "engine"
+    Default: "brainyes/engine"
   MainGitBranch:
     Type: String
     Default: "main"
@@ -352,6 +352,30 @@ Resources:
                   - Name: BuildArtifactAsZip
           - !Ref AWS::NoValue
 
+        - !If
+          - IsMainBranchPipeline
+          - Name: BuildAndPushEngine
+            Actions:
+              - Name: BuildEngineImage
+                ActionTypeId:
+                  Category: Build
+                  Owner: AWS
+                  Provider: CodeBuild
+                  Version: "1"
+                Configuration:
+                  ProjectName: !Ref CodeBuildProjectEngineImage
+                  EnvironmentVariables: !Sub |
+                    [
+                      {"name": "ENGINE_IMAGE_REPOSITORY", "value": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/engine"},
+                      {"name": "AWS_DEFAULT_REGION", "value": "${AWS::Region}"},
+                      {"name": "AWS_ACCOUNT_ID", "value": "${AWS::AccountId}"},
+                      {"name": "STACK_NAME", "value": "${ProdStackName}"}
+                    ]
+                InputArtifacts:
+                  - Name: SourceCodeAsZip
+                RunOrder: 1
+          - !Ref AWS::NoValue
+
   PipelineArtifactsBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -502,6 +526,10 @@ Resources:
                     - IsMainBranchPipeline
                     - !GetAtt CodeBuildProjectDeploy.Arn
                     - !Ref AWS::NoValue
+                  - !If
+                    - IsMainBranchPipeline
+                    - !GetAtt CodeBuildProjectEngineImage.Arn
+                    - !Ref AWS::NoValue
               - Effect: Allow
                 Action:
                   - "cloudformation:CreateStack"
@@ -581,6 +609,21 @@ Resources:
                   - "s3:PutObject"
                 Resource:
                   - !Sub "arn:${AWS::Partition}:s3:::${PipelineArtifactsBucket}/*"
+        - PolicyName: SAMDeploymentBucketAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:PutObject"
+                  - "s3:GetBucketLocation"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${TestingArtifactBucket}/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::${TestingArtifactBucket}"
+                  - !Sub "arn:${AWS::Partition}:s3:::${ProdArtifactBucket}/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::${ProdArtifactBucket}"
         - PolicyName: AssumeStagePipExecutionRoles
           PolicyDocument:
             Version: "2012-10-17"
@@ -592,6 +635,52 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:ResourceTag/Role: pipeline-execution-role
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:BatchImportLayerPart
+                  - ecr:UploadLayerPart
+                  - ecr:InitiateLayerUpload
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: "*"
+        - PolicyName: CloudFormationAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:ValidateTemplate
+                Resource: "*"
+        - PolicyName: IAMPassRole
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Ref TestingCloudFormationExecutionRole
+                  - !Ref ProdCloudFormationExecutionExeRole
 
   # Uncomment and modify the following step for running the unit-tests
   # CodeBuildProjectUnitTest:
@@ -704,6 +793,23 @@ Resources:
       Source:
         Type: CODEPIPELINE
         BuildSpec: pipeline/buildspec_deploy.yml
+
+  CodeBuildProjectEngineImage:
+    Condition: IsMainBranchPipeline
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        PrivilegedMode: true
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec_engine.yml
+
 Outputs:
   CodeStarConnectionArn:
     Condition: CreateConnection

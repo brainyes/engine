@@ -97,7 +97,7 @@ sam deploy --profile brainyes
 If you are starting a new AWS environment from scratch, you probably want to run this first to create ECR images.
 
 ```
-sam deploy --profile brainyes -t codepipeline.yaml --parameter-overrides SupabaseUrl="${SUPABASE_URL}" SupabaseKey="${SUPABASE_KEY}" --stack-name brainyes-engine-pipeline-stacksam
+sam deploy -t codepipeline.yaml --stack-name brainyes-pipeline --capabilities=CAPABILITY_IAM --profile brainyes
 ```
 
 CodeBuild will use `buildspec*.yml` files in `./pipeline/` directory.

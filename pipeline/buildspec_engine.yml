@@ -1,0 +1,38 @@
+version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ENGINE_IMAGE_REPOSITORY
+      - echo Build started on `date`
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image for ECS Engine...          
+      - docker build -f Dockerfile -t engine:latest .
+      - docker tag engine:latest $ENGINE_IMAGE_REPOSITORY:latest
+      - docker tag engine:latest $ENGINE_IMAGE_REPOSITORY:$CODEBUILD_BUILD_NUMBER
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      - docker push $ENGINE_IMAGE_REPOSITORY:latest
+      - docker push $ENGINE_IMAGE_REPOSITORY:$CODEBUILD_BUILD_NUMBER
+      - echo Updating ECS task definition...
+      - |
+        aws ecs describe-task-definition \
+          --task-definition brainyes-task \
+          --query taskDefinition \
+          --region $AWS_DEFAULT_REGION > task-definition.json
+      - |
+        jq --arg IMAGE_URI "$ENGINE_IMAGE_REPOSITORY:$CODEBUILD_BUILD_NUMBER" \
+           '.containerDefinitions[0].image = $IMAGE_URI' \
+           task-definition.json > updated-task-definition.json
+      - |
+        aws ecs register-task-definition \
+          --region $AWS_DEFAULT_REGION \
+          --cli-input-json file://updated-task-definition.json \
+          --query 'taskDefinition.taskDefinitionArn' \
+          --output text > new-task-definition-arn.txt
+      - echo New task definition ARN: $(cat new-task-definition-arn.txt)
+      - echo Engine image build and ECS update completed successfully
