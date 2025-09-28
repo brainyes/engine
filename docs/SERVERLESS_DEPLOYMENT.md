@@ -100,6 +100,8 @@ If you are starting a new AWS environment from scratch, you probably want to run
 sam deploy -t codepipeline.yaml --stack-name brainyes-pipeline --capabilities=CAPABILITY_IAM --profile brainyes
 ```
 
+You can also use the same command to update the CI/CD pipelines defined in `codepipeline.yml` as CloudFormation stack.
+
 CodeBuild will use `buildspec*.yml` files in `./pipeline/` directory.
 
 ## API Endpoints
