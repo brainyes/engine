@@ -60,7 +60,6 @@ COPY functions/ ./functions/
 COPY utilities/ ./utilities/
 COPY insights/ ./insights/
 COPY handlers/ ./handlers/
-COPY .env .env
 
 # Create a non-root user
 RUN useradd -m -s /bin/bash brainyes
