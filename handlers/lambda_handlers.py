@@ -241,11 +241,12 @@ def list_functions_handler(event, context):
             'error': str(e)
         })
 
+
 def get_task_status_handler(event, context):
     """Lambda handler for checking task status"""
     try:
         task_id = event['pathParameters']['task_id']
-        
+
         # Query task from Supabase
         result = supabase.table('async_tasks').select('*').eq('id', task_id).execute()
         if result.data:
@@ -255,7 +256,7 @@ def get_task_status_handler(event, context):
                 'success': False,
                 'error': f'Task not found: {task_id}'
             })
-        
+
         return create_response(200, {
             'success': True,
             'task': task
@@ -303,15 +304,115 @@ def get_task_logs_handler(event, context):
             'error': str(e)
         })
 
+def ecs_task_event_handler(event, context):
+    """Handle ECS task state change events from EventBridge"""
+    try:
+        print(f"Received ECS task event: {json.dumps(event, default=str)}")
+
+        # Extract event details
+        detail = event.get('detail', {})
+        task_arn = detail.get('taskArn', '')
+        last_status = detail.get('lastStatus', '')
+        stop_code = detail.get('stopCode', '')
+        stopped_reason = detail.get('stoppedReason', '')
+        containers = detail.get('containers', [])
+
+        if not task_arn:
+            print("No task ARN in event, skipping")
+            return
+
+        print(f"Task {task_arn} status: {last_status}")
+
+        # Find the corresponding task in our database
+        result = supabase.table('async_tasks').select('*').eq('ecs_task_arn', task_arn).execute()
+
+        if not result.data:
+            print(f"No matching task found for ECS task ARN: {task_arn}")
+            return
+
+        task = result.data[0]
+        task_id = task['id']
+
+        # Handle different ECS task states
+        if last_status == 'RUNNING':
+            # Task started successfully
+            if task.get('status') == 'pending':
+                update_data = {
+                    'status': 'running',
+                    'started_at': datetime.now(timezone.utc).isoformat()
+                }
+                supabase.table('async_tasks').update(update_data).eq('id', task_id).execute()
+                print(f"Updated task {task_id} to running")
+
+        elif last_status == 'STOPPED':
+            # Task stopped - check if it was successful or failed
+            failed_containers = [c for c in containers if c.get('exitCode', 0) != 0]
+
+            if failed_containers:
+                # Task failed
+                exit_codes = [str(c.get('exitCode', 'unknown')) for c in failed_containers]
+                error_msg = f"Container failed with exit code(s): {', '.join(exit_codes)}"
+                if stopped_reason:
+                    error_msg += f". Reason: {stopped_reason}"
+
+                update_data = {
+                    'status': 'failed',
+                    'error': error_msg,
+                    'completed_at': datetime.now(timezone.utc).isoformat()
+                }
+                supabase.table('async_tasks').update(update_data).eq('id', task_id).execute()
+                print(f"Updated task {task_id} to failed: {error_msg}")
+
+            elif stop_code in ['UserInitiated', 'SpotInterruption', 'TerminationNotice']:
+                # Task was stopped externally
+                update_data = {
+                    'status': 'failed',
+                    'error': f"Task stopped: {stopped_reason}",
+                    'completed_at': datetime.now(timezone.utc).isoformat()
+                }
+                supabase.table('async_tasks').update(update_data).eq('id', task_id).execute()
+                print(f"Updated task {task_id} to failed (external stop): {stopped_reason}")
+
+            else:
+                # Task completed successfully (exit code 0)
+                # Note: Successful tasks should already be marked as completed by the ECS handler itself
+                # This is just a safety net
+                if task.get('status') not in ['completed', 'failed']:
+                    update_data = {
+                        'status': 'completed',
+                        'completed_at': datetime.now(timezone.utc).isoformat()
+                    }
+                    supabase.table('async_tasks').update(update_data).eq('id', task_id).execute()
+                    print(f"Updated task {task_id} to completed (safety net)")
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'success': True, 'processed': task_id})
+        }
+
+    except Exception as e:
+        print(f"Error processing ECS task event: {str(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'success': False, 'error': str(e)})
+        }
+
 def router_handler(event, context):
     """Single router handler that routes requests to appropriate functionality"""
     try:
-        # Get the resource path to determine which handler to use
+        # Check if this is an EventBridge event (ECS task state change)
+        if 'source' in event and event.get('source') == 'aws.ecs':
+            print("Routing to ECS task event handler")
+            return ecs_task_event_handler(event, context)
+
+        # Otherwise, handle as API Gateway event
         path = event.get('resource', '')
         method = event.get('httpMethod', '')
-        
+
         print(f"Router received: {method} {path}")
-        
+
         # Route based on path and method
         if path == '/functions' and method == 'GET':
             return list_functions_handler(event, context)

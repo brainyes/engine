@@ -684,6 +684,8 @@ Resources:
                   - iam:PassRole
                 Resource:
                   - !GetAtt PipelineStackCloudFormationExecutionRole.Arn
+                  - "arn:aws:iam::<AWS_ACCOUNT_ID>:role/brainyes-engine-EcsTaskRole-*"
+                  - "arn:aws:iam::<AWS_ACCOUNT_ID>:role/brainyes-engine-EcsExecutionRole-*"
         - PolicyName: ECSAccess
           PolicyDocument:
             Version: "2012-10-17"

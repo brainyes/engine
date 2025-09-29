@@ -16,6 +16,9 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Add the parent directory to Python path for module imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 load_dotenv()
 
 # Import utilities
@@ -24,14 +27,14 @@ from utilities.data import supabase
 
 def get_function_names():
     """Get list of function names without importing them"""
-    functions_dir = Path(__file__).parent / "functions"
+    functions_dir = Path(__file__).parent.parent / "functions"
     function_names = []
-    
+
     for py_file in functions_dir.glob("*.py"):
         if py_file.name.startswith("__") or py_file.name == "template.py":
             continue
         function_names.append(py_file.stem)
-    
+
     return function_names
 
 def lazy_import_function(function_name):

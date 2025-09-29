@@ -231,6 +231,18 @@ Resources:
             RestApiId: !Ref BrainYesApi
             Path: /tasks/{task_id}/logs
             Method: GET
+        # ECS Task State Change Events
+        EcsTaskStateChange:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - aws.ecs
+              detail-type:
+                - ECS Task State Change
+              detail:
+                clusterArn:
+                  - !GetAtt EcsCluster.Arn
     Metadata:
       Dockerfile: Dockerfile.lambda
       DockerContext: ./
