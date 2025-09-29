@@ -20,7 +20,7 @@ phases:
       - docker push $ENGINE_IMAGE_REPOSITORY:$CODEBUILD_BUILD_NUMBER
       - echo Updating ECS task definition...
       - aws ecs describe-task-definition --task-definition brainyes-task --query taskDefinition --region $AWS_DEFAULT_REGION > task-definition.json
-      - jq --arg IMAGE_URI "$ENGINE_IMAGE_REPOSITORY:$CODEBUILD_BUILD_NUMBER" '.containerDefinitions[0].image = $IMAGE_URI' task-definition.json > updated-task-definition.json
+      - jq --arg IMAGE_URI "$ENGINE_IMAGE_REPOSITORY:$CODEBUILD_BUILD_NUMBER" 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .placementConstraints, .compatibilities, .registeredAt, .registeredBy) | .containerDefinitions[0].image = $IMAGE_URI' task-definition.json > updated-task-definition.json
       - aws ecs register-task-definition --region $AWS_DEFAULT_REGION --cli-input-json file://updated-task-definition.json --query 'taskDefinition.taskDefinitionArn' --output text > new-task-definition-arn.txt
       - echo New task definition ARN':' $(cat new-task-definition-arn.txt)
       - echo Engine image build and ECS update completed successfully
