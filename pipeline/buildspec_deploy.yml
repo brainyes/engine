@@ -9,11 +9,11 @@ phases:
   build:
     commands:
       - . ./assume-role.sh ${ENV_PIPELINE_EXECUTION_ROLE} deploy
+      # Deploy using the pre-built package from BuildAndPackage stage
       - sam deploy --stack-name ${ENV_STACK_NAME}
                     --template ${ENV_TEMPLATE}
                     --capabilities CAPABILITY_IAM
                     --region ${ENV_REGION}
-                    --s3-bucket ${ENV_BUCKET}
-                    --image-repository ${ENV_IMAGE_REPOSITORY}
+                    --no-confirm-changeset
                     --no-fail-on-empty-changeset
                     --role-arn ${ENV_CLOUDFORMATION_EXECUTION_ROLE}
