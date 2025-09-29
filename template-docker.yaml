@@ -180,7 +180,7 @@ Resources:
       ImageConfig:
         Command: ["handlers.lambda_handlers.router_handler"]
       Architectures:
-        - x86_64
+        - arm64
       Policies:
         - SQSSendMessagePolicy:
             QueueName: !GetAtt TaskQueue.QueueName
@@ -269,6 +269,9 @@ Resources:
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       Cpu: '2048'  # 2 vCPU
       Memory: '8192'  # 8 GB RAM
       ExecutionRoleArn: !Ref EcsExecutionRole
