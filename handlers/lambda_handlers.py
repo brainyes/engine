@@ -304,6 +304,101 @@ def get_task_logs_handler(event, context):
             'error': str(e)
         })
 
+def sqs_to_ecs_handler(event, context):
+    """Handle SQS messages and launch ECS tasks"""
+    try:
+        print(f"Received SQS event: {json.dumps(event, default=str)}")
+
+        # Process each SQS record
+        for record in event.get('Records', []):
+            try:
+                # Parse the SQS message body
+                message_body = json.loads(record['body'])
+                task_id = message_body.get('task_id')
+                function_name = message_body.get('function_name')
+                parameters = message_body.get('parameters', {})
+
+                print(f"Processing task {task_id}: {function_name}")
+
+                if not task_id:
+                    print("No task_id in message, skipping")
+                    continue
+
+                # Launch ECS task
+                ecs_response = ecs.run_task(
+                    cluster='brainyes-cluster',
+                    taskDefinition='brainyes-task',
+                    launchType='FARGATE',
+                    networkConfiguration={
+                        'awsvpcConfiguration': {
+                            'subnets': [
+                                # We'll get these from environment variables
+                                os.environ.get('SUBNET_1'),
+                                os.environ.get('SUBNET_2')
+                            ],
+                            'securityGroups': [
+                                os.environ.get('SECURITY_GROUP')
+                            ],
+                            'assignPublicIp': 'ENABLED'
+                        }
+                    },
+                    overrides={
+                        'containerOverrides': [
+                            {
+                                'name': 'brainyes-container',
+                                'environment': [
+                                    {'name': 'TASK_ID', 'value': task_id},
+                                    {'name': 'FUNCTION_NAME', 'value': function_name},
+                                    {'name': 'PARAMETERS', 'value': json.dumps(parameters)}
+                                ]
+                            }
+                        ]
+                    }
+                )
+
+                # Extract task ARN from response
+                if ecs_response.get('tasks'):
+                    task_arn = ecs_response['tasks'][0]['taskArn']
+                    print(f"Started ECS task: {task_arn}")
+
+                    # Update database with ECS task ARN
+                    update_data = {
+                        'ecs_task_arn': task_arn,
+                        'updated_at': datetime.now(timezone.utc).isoformat()
+                    }
+                    supabase.table('async_tasks').update(update_data).eq('id', task_id).execute()
+                    print(f"Updated task {task_id} with ECS task ARN")
+
+                else:
+                    print(f"Failed to start ECS task for {task_id}")
+                    # Mark task as failed
+                    update_data = {
+                        'status': 'failed',
+                        'error': 'Failed to start ECS task',
+                        'completed_at': datetime.now(timezone.utc).isoformat()
+                    }
+                    supabase.table('async_tasks').update(update_data).eq('id', task_id).execute()
+
+            except Exception as e:
+                print(f"Error processing SQS record: {str(e)}")
+                import traceback
+                print(f"Traceback: {traceback.format_exc()}")
+                continue
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'success': True, 'processed': len(event.get('Records', []))})
+        }
+
+    except Exception as e:
+        print(f"Error in sqs_to_ecs_handler: {str(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'success': False, 'error': str(e)})
+        }
+
 def ecs_task_event_handler(event, context):
     """Handle ECS task state change events from EventBridge"""
     try:
@@ -406,6 +501,11 @@ def router_handler(event, context):
         if 'source' in event and event.get('source') == 'aws.ecs':
             print("Routing to ECS task event handler")
             return ecs_task_event_handler(event, context)
+
+        # Check if this is an SQS event
+        if 'Records' in event and event['Records'] and event['Records'][0].get('eventSource') == 'aws:sqs':
+            print("Routing to SQS to ECS handler")
+            return sqs_to_ecs_handler(event, context)
 
         # Otherwise, handle as API Gateway event
         path = event.get('resource', '')

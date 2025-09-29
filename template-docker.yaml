@@ -181,8 +181,15 @@ Resources:
         Command: ["handlers.lambda_handlers.router_handler"]
       Architectures:
         - arm64
+      Environment:
+        Variables:
+          SUBNET_1: !Ref PublicSubnet1
+          SUBNET_2: !Ref PublicSubnet2
+          SECURITY_GROUP: !Ref EcsSecurityGroup
       Policies:
         - SQSSendMessagePolicy:
+            QueueName: !GetAtt TaskQueue.QueueName
+        - SQSPollerPolicy:
             QueueName: !GetAtt TaskQueue.QueueName
         - Version: '2012-10-17'
           Statement:
@@ -191,6 +198,17 @@ Resources:
                 - logs:GetLogEvents
                 - logs:FilterLogEvents
               Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/brainyes-task:*'
+            - Effect: Allow
+              Action:
+                - ecs:RunTask
+                - ecs:DescribeTasks
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource:
+                - !GetAtt EcsExecutionRole.Arn
+                - !GetAtt EcsTaskRole.Arn
       Events:
         # Function execution endpoints
         PostFunction:
@@ -243,6 +261,12 @@ Resources:
               detail:
                 clusterArn:
                   - !GetAtt EcsCluster.Arn
+        # SQS trigger for launching ECS tasks
+        SqsTaskTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TaskQueue.Arn
+            BatchSize: 1
     Metadata:
       Dockerfile: Dockerfile.lambda
       DockerContext: ./
@@ -362,66 +386,6 @@ Resources:
                   - sqs:GetQueueAttributes
                 Resource: !GetAtt TaskQueue.Arn
 
-  # EventBridge Pipe to trigger ECS tasks from SQS
-  SqsToEcsPipe:
-    Type: AWS::Pipes::Pipe
-    Properties:
-      Name: brainyes-sqs-to-ecs-pipe
-      Description: Trigger ECS task when message arrives in SQS
-      RoleArn: !GetAtt PipeRole.Arn
-      Source: !GetAtt TaskQueue.Arn
-      SourceParameters:
-        SqsQueueParameters:
-          BatchSize: 1
-      Target: !GetAtt EcsCluster.Arn
-      TargetParameters:
-        EcsTaskParameters:
-          TaskDefinitionArn: !Ref EcsTaskDefinition
-          LaunchType: FARGATE
-          NetworkConfiguration:
-            AwsvpcConfiguration:
-              Subnets:
-                - !Ref PublicSubnet1
-                - !Ref PublicSubnet2
-              SecurityGroups:
-                - !Ref EcsSecurityGroup
-              AssignPublicIp: ENABLED
-
-  PipeRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: pipes.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: SqsSource
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - sqs:ReceiveMessage
-                  - sqs:DeleteMessage
-                  - sqs:GetQueueAttributes
-                Resource: !GetAtt TaskQueue.Arn
-        - PolicyName: EcsTarget
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ecs:RunTask
-                Resource: !Ref EcsTaskDefinition
-              - Effect: Allow
-                Action:
-                  - iam:PassRole
-                Resource:
-                  - !GetAtt EcsExecutionRole.Arn
-                  - !GetAtt EcsTaskRole.Arn
 
 Outputs:
   ApiUrl:
