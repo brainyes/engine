@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Initialize AWS clients
 sqs = boto3.client('sqs')
+ecs = boto3.client('ecs')
 TASK_QUEUE_URL = os.environ.get('TASK_QUEUE_URL', '')
 
 def create_response(status_code: int, body: Any) -> Dict[str, Any]:
