@@ -33,6 +33,7 @@ COPY functions/ ${LAMBDA_TASK_ROOT}/functions/
 COPY utilities/ ${LAMBDA_TASK_ROOT}/utilities/
 COPY insights/ ${LAMBDA_TASK_ROOT}/insights/
 COPY handlers/ ${LAMBDA_TASK_ROOT}/handlers/
+COPY research/input/ ${LAMBDA_TASK_ROOT}/research/input/
 
 # Copy .env if exists (for local testing)
 COPY .env* ${LAMBDA_TASK_ROOT}/
