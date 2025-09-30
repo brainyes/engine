@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Initialize AWS clients
 sqs = boto3.client('sqs')
 ecs = boto3.client('ecs')
+logs = boto3.client('logs')
 TASK_QUEUE_URL = os.environ.get('TASK_QUEUE_URL', '')
 
 def create_response(status_code: int, body: Any) -> Dict[str, Any]:
@@ -187,8 +188,8 @@ def async_task_handler(event, context):
             'function_name': function_name,
             'parameters': parameters,
             'status': 'pending',
-            'created_at': datetime.now(timezone.utc).isoformat(),
-            'logs_url': f"https://console.aws.amazon.com/cloudwatch/home?region={os.environ.get('AWS_REGION', 'us-east-1')}#logsV2:log-groups"
+            'created_at': datetime.now(timezone.utc).isoformat()
+            # logs_url will be set by ECS handler when task starts running
         }
         
         # Get user_id from parameters if provided
@@ -273,8 +274,8 @@ def get_task_logs_handler(event, context):
     """Lambda handler for fetching task logs from CloudWatch"""
     try:
         task_id = event['pathParameters']['task_id']
-        
-        # Query task from Supabase to get ECS task ARN
+
+        # Query task from Supabase to get log stream name
         result = supabase.table('async_tasks').select('*').eq('id', task_id).execute()
         if result.data:
             task = result.data[0]
@@ -284,21 +285,64 @@ def get_task_logs_handler(event, context):
                 'error': f'Task not found: {task_id}'
             })
 
-        # If task has ECS task ARN, fetch logs from CloudWatch
-        if task.get('ecs_task_arn'):
-            # TODO: Implement CloudWatch logs fetching
-            # For now, return a placeholder
-            logs = f"Logs for task {task_id} would be fetched from CloudWatch here"
+        log_stream = task.get('logs_url')  # This now contains the log stream name
+        next_token = event.get('queryStringParameters', {}).get('nextToken') if event.get('queryStringParameters') else None
+
+        if log_stream:
+            try:
+                # Fetch logs from CloudWatch
+                params = {
+                    'logGroupName': '/ecs/brainyes-task',
+                    'logStreamName': log_stream,
+                    'startFromHead': True,
+                    'limit': 1000
+                }
+
+                # Add nextToken for pagination if provided
+                if next_token:
+                    params['nextToken'] = next_token
+
+                response = logs.get_log_events(**params)
+
+                # Format logs as text
+                log_lines = [event['message'] for event in response.get('events', [])]
+                log_text = '\n'.join(log_lines)
+                next_forward_token = response.get('nextForwardToken')
+
+                return create_response(200, {
+                    'success': True,
+                    'task_id': task_id,
+                    'logs': log_text,
+                    'log_stream': log_stream,
+                    'next_token': next_forward_token,
+                    'status': task['status'],
+                    'has_more': len(log_lines) == 1000  # Max limit reached
+                })
+
+            except logs.exceptions.ResourceNotFoundException:
+                return create_response(200, {
+                    'success': True,
+                    'task_id': task_id,
+                    'logs': 'Log stream not found yet (task may be starting)',
+                    'log_stream': log_stream,
+                    'status': task['status']
+                })
+            except Exception as e:
+                return create_response(200, {
+                    'success': True,
+                    'task_id': task_id,
+                    'logs': f'Could not fetch logs: {str(e)}',
+                    'log_stream': log_stream,
+                    'status': task['status']
+                })
         else:
-            logs = "Task has not started yet"
-        
-        return create_response(200, {
-            'success': True,
-            'task_id': task_id,
-            'logs': logs,
-            'status': task['status'],
-        })
-        
+            return create_response(200, {
+                'success': True,
+                'task_id': task_id,
+                'logs': 'Task has not started yet',
+                'status': task['status']
+            })
+
     except Exception as e:
         return create_response(500, {
             'success': False,

@@ -82,7 +82,11 @@ class TaskRunner:
             if status == 'running':
                 update_data['started_at'] = datetime.now(timezone.utc).isoformat()
                 update_data['ecs_task_arn'] = ECS_TASK_ARN
-                update_data['logs_url'] = f"https://console.aws.amazon.com/cloudwatch/home?region={AWS_REGION}#logsV2:log-groups"
+                # Extract task ID from ECS_TASK_ARN and store log stream name
+                # Format: arn:aws:ecs:region:account:task/cluster-name/task-id
+                task_id = ECS_TASK_ARN.split('/')[-1] if ECS_TASK_ARN else ''
+                log_stream = f"ecs/brainyes-container/{task_id}"
+                update_data['logs_url'] = log_stream
             elif status == 'completed':
                 update_data['completed_at'] = datetime.now(timezone.utc).isoformat()
                 if result:

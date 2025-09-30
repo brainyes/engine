@@ -7,8 +7,8 @@ phases:
       - pip install --upgrade aws-sam-cli
   build:
     commands:
-      - . ./assume-role.sh ${ENV_PIPELINE_EXECUTION_ROLE} deploy
       # Deploy using the pre-built package from BuildAndPackage stage
+      # Note: CodeBuild already has necessary permissions via its service role
       - sam deploy --stack-name ${ENV_STACK_NAME}
                     --template ${ENV_TEMPLATE}
                     --capabilities CAPABILITY_IAM
