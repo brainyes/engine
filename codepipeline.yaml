@@ -65,7 +65,7 @@ Parameters:
     Default: "brainyes-engine"
   ProdPipelineExecutionRole:
     Type: String
-    Default: "arn:aws:iam::<AWS_ACCOUNT_ID>:role/aws-sam-cli-managed-productio-PipelineExecutionRole-SH2L2yZ3RGO9"
+    Default: ""
   ProdCloudFormationExecutionExeRole:
     Type: String
     Default: "arn:aws:iam::<AWS_ACCOUNT_ID>:role/aws-sam-cli-managed-produ-CloudFormationExecutionRo-6WmZzLESG0QJ"
@@ -346,7 +346,7 @@ Resources:
                       {"name": "ENV_TEMPLATE", "value": "packaged-prod.yaml"},
                       {"name": "ENV_REGION", "value": "${ProdRegion}"},
                       {"name": "ENV_STACK_NAME", "value": "${ProdStackName}"},
-                      {"name": "ENV_PIPELINE_EXECUTION_ROLE", "value": "${ProdPipelineExecutionRole}"},
+                      {"name": "ENV_PIPELINE_EXECUTION_ROLE", "value": "${CodeBuildServiceRole.Arn}"},
                       {"name": "ENV_CLOUDFORMATION_EXECUTION_ROLE", "value": "${PipelineStackCloudFormationExecutionRole.Arn}"},
                       {"name": "ENV_BUCKET", "value": "${ProdArtifactBucket}"},
                       {"name": "ENV_IMAGE_REPOSITORY", "value": "${ProdImageRepository}"}
@@ -766,7 +766,7 @@ Resources:
           - Name: TESTING_PIPELINE_EXECUTION_ROLE
             Value: !Ref TestingPipelineExecutionRole
           - Name: PROD_PIPELINE_EXECUTION_ROLE
-            Value: !Ref ProdPipelineExecutionRole
+            Value: !GetAtt CodeBuildServiceRole.Arn
           - Name: TESTING_ARTIFACT_BUCKET
             Value: !Ref TestingArtifactBucket
           - Name: PROD_ARTIFACT_BUCKET

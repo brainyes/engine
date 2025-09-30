@@ -204,46 +204,132 @@ class TaskRunner:
             raise
     
     def run(self):
-        """Main loop to process messages from SQS"""
+        """Main loop to process messages from environment variables or SQS"""
         print("Task runner started")
-        if not TASK_QUEUE_URL:
-            print("ERROR: TASK_QUEUE_URL environment variable not set")
-            sys.exit(1)
-
-        print(f"Queue URL: {TASK_QUEUE_URL}")
         print(f"Available functions: {get_function_names()}")
-        
-        # Process a single message (ECS task is triggered per message)
-        try:
-            # Receive message from SQS with error handling
-            print("Polling SQS for messages...")
-            response = sqs.receive_message(
-                QueueUrl=TASK_QUEUE_URL,
-                MaxNumberOfMessages=1,
-                WaitTimeSeconds=20,  # Long polling
-                VisibilityTimeout=43200  # 12 hours
-            )
-            
-            messages = response.get('Messages', [])
-            
-            if not messages:
-                print("No messages in queue, exiting gracefully")
-                return
-            
-            # Process the message
-            message = messages[0]
-            self.process_message(message)
-            
-        except Exception as e:
-            print(f"Fatal error in task runner: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
-            # Send notification if possible
-            if self.task_id:
+
+        # Check if task details are passed via environment variables (preferred method)
+        env_task_id = os.environ.get('TASK_ID')
+        env_function_name = os.environ.get('FUNCTION_NAME')
+        env_parameters = os.environ.get('PARAMETERS')
+
+        if env_task_id and env_function_name:
+            # Process task from environment variables (launched by sqs_to_ecs_handler)
+            print(f"Processing task from environment variables: {env_task_id}")
+            try:
+                parameters = json.loads(env_parameters) if env_parameters else {}
+
+                # Create a synthetic message body matching SQS format
+                message_body = {
+                    'task_id': env_task_id,
+                    'function_name': env_function_name,
+                    'parameters': parameters
+                }
+
+                # Process directly without SQS message
+                self.task_id = message_body.get('task_id')
+                self.function_name = message_body.get('function_name')
+                self.parameters = message_body.get('parameters', {})
+
+                print(f"Processing task {self.task_id}: {self.function_name}")
+                print(f"Parameters: {json.dumps(self.parameters, default=str)}")
+
+                # Update status to running
+                self.update_task_status('running')
+
+                # Check if function exists
+                available_function_names = get_function_names()
+                if self.function_name not in available_function_names:
+                    raise ValueError(f"Unknown function: {self.function_name}. Available functions: {available_function_names}")
+
+                # Check cache first, then lazy import if needed
+                if self.function_name in IMPORTED_FUNCTIONS:
+                    func = IMPORTED_FUNCTIONS[self.function_name]
+                    print(f"Using cached function: {self.function_name}")
+                else:
+                    func = lazy_import_function(self.function_name)
+                    if func:
+                        IMPORTED_FUNCTIONS[self.function_name] = func
+                    else:
+                        raise ImportError(f"Failed to import function: {self.function_name}")
+
+                # Execute the function
+                start_time = time.time()
+                try:
+                    result = func(**self.parameters)
+                except TypeError as e:
+                    raise ValueError(f"Parameter error calling {self.function_name}: {str(e)}")
+                execution_time = time.time() - start_time
+
+                # Update status to completed
+                self.update_task_status('completed', result={
+                    'execution_time_seconds': execution_time,
+                    'function_result': result
+                })
+
+                # Send success notification
                 self.send_notification(
-                    "Task runner fatal error",
-                    f"Task: {self.task_id}\nError: {str(e)}\n{traceback.format_exc()}"
+                    f"Task {self.task_id} completed successfully",
+                    f"Function: {self.function_name}\nExecution time: {execution_time:.2f} seconds\nResult: {json.dumps(result, indent=2, default=str)}"
                 )
-            sys.exit(1)
+
+                print(f"Task {self.task_id} completed successfully in {execution_time:.2f} seconds")
+                print(f"Total container runtime: {(datetime.now(timezone.utc) - self.start_time).total_seconds():.2f} seconds")
+
+            except Exception as e:
+                error_msg = str(e)
+                error_trace = traceback.format_exc()
+                full_error = f"Error processing task: {error_msg}\n{error_trace}"
+                print(f"ERROR: {error_msg}")
+                print(f"TRACEBACK: {error_trace}")
+
+                if self.task_id:
+                    self.update_task_status('failed', error=full_error)
+                    self.send_notification(
+                        f"Task {self.task_id} failed",
+                        f"Function: {self.function_name}\nError: {full_error}"
+                    )
+                raise
+
+        else:
+            # Fallback: Process from SQS (legacy method)
+            print("No environment variables found, falling back to SQS polling...")
+            if not TASK_QUEUE_URL:
+                print("ERROR: TASK_QUEUE_URL environment variable not set")
+                sys.exit(1)
+
+            print(f"Queue URL: {TASK_QUEUE_URL}")
+
+            try:
+                # Receive message from SQS with error handling
+                print("Polling SQS for messages...")
+                response = sqs.receive_message(
+                    QueueUrl=TASK_QUEUE_URL,
+                    MaxNumberOfMessages=1,
+                    WaitTimeSeconds=20,  # Long polling
+                    VisibilityTimeout=43200  # 12 hours
+                )
+
+                messages = response.get('Messages', [])
+
+                if not messages:
+                    print("No messages in queue, exiting gracefully")
+                    return
+
+                # Process the message
+                message = messages[0]
+                self.process_message(message)
+
+            except Exception as e:
+                print(f"Fatal error in task runner: {str(e)}")
+                print(f"Traceback: {traceback.format_exc()}")
+                # Send notification if possible
+                if self.task_id:
+                    self.send_notification(
+                        "Task runner fatal error",
+                        f"Task: {self.task_id}\nError: {str(e)}\n{traceback.format_exc()}"
+                    )
+                sys.exit(1)
 
 def main():
     """Entry point"""
