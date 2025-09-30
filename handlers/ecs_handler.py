@@ -61,8 +61,34 @@ ecs = boto3.client('ecs')
 # Environment variables
 TASK_QUEUE_URL = os.environ.get('TASK_QUEUE_URL', '')
 SNS_TOPIC_ARN = os.environ.get('SNS_TOPIC_ARN', '')
-ECS_TASK_ARN = os.environ.get('ECS_TASK_ARN', '')
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+
+# Get ECS Task ARN from metadata endpoint
+def get_ecs_task_arn():
+    """Fetch the ECS task ARN from the ECS container metadata endpoint"""
+    try:
+        # ECS provides task metadata via this environment variable
+        metadata_uri = os.environ.get('ECS_CONTAINER_METADATA_URI_V4')
+        if not metadata_uri:
+            print("ECS_CONTAINER_METADATA_URI_V4 not found, task ARN will not be available")
+            return ''
+
+        # Fetch task metadata
+        import requests
+        response = requests.get(f"{metadata_uri}/task", timeout=2)
+        if response.status_code == 200:
+            task_metadata = response.json()
+            task_arn = task_metadata.get('TaskARN', '')
+            print(f"Retrieved ECS Task ARN: {task_arn}")
+            return task_arn
+        else:
+            print(f"Failed to fetch ECS metadata: {response.status_code}")
+            return ''
+    except Exception as e:
+        print(f"Error fetching ECS task ARN: {e}")
+        return ''
+
+ECS_TASK_ARN = get_ecs_task_arn()
 
 class TaskRunner:
     def __init__(self):

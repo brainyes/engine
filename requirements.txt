@@ -12,3 +12,4 @@ uvicorn
 psutil
 boto3
 aws-lambda-powertools
+requests

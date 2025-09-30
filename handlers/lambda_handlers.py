@@ -288,6 +288,16 @@ def get_task_logs_handler(event, context):
         log_stream = task.get('logs_url')  # This now contains the log stream name
         next_token = event.get('queryStringParameters', {}).get('nextToken') if event.get('queryStringParameters') else None
 
+        # Check if log_stream is valid (not the old generic URL)
+        if log_stream and log_stream.startswith('http'):
+            # Legacy task with old generic CloudWatch URL
+            return create_response(200, {
+                'success': True,
+                'task_id': task_id,
+                'logs': 'This task was created before log streaming was implemented. Logs are only available in CloudWatch console.',
+                'status': task['status']
+            })
+
         if log_stream:
             try:
                 # Fetch logs from CloudWatch
@@ -319,19 +329,21 @@ def get_task_logs_handler(event, context):
                     'has_more': len(log_lines) == 1000  # Max limit reached
                 })
 
-            except logs.exceptions.ResourceNotFoundException:
+            except logs.exceptions.ResourceNotFoundException as e:
                 return create_response(200, {
                     'success': True,
                     'task_id': task_id,
-                    'logs': 'Log stream not found yet (task may be starting)',
+                    'logs': f'Log stream not found yet (task may be starting).\n\nExpected stream: {log_stream}\n\nNote: Logs may take 30-60 seconds to appear in CloudWatch after task starts.',
                     'log_stream': log_stream,
                     'status': task['status']
                 })
             except Exception as e:
+                import traceback
+                error_details = f'{str(e)}\n\nLog stream: {log_stream}\nLog group: /ecs/brainyes-task\n\nTraceback:\n{traceback.format_exc()}'
                 return create_response(200, {
                     'success': True,
                     'task_id': task_id,
-                    'logs': f'Could not fetch logs: {str(e)}',
+                    'logs': f'Could not fetch logs: {error_details}',
                     'log_stream': log_stream,
                     'status': task['status']
                 })
