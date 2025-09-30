@@ -325,6 +325,8 @@ Resources:
               Value: !Ref TaskQueue
             - Name: AWS_REGION
               Value: !Ref AWS::Region
+            - Name: LAMBDA_API_URL
+              Value: !Sub 'https://${BrainYesApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
           LogConfiguration:
             LogDriver: awslogs
             Options:
