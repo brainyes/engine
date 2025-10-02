@@ -104,6 +104,12 @@ You can also use the same command to update the CI/CD pipelines defined in `code
 
 CodeBuild will use `buildspec*.yml` files in `./pipeline/` directory.
 
+## Debugging production environment
+I typically have these tabs:
+- CodePipeline project, to monitor builds
+- Lambda and its CloudWatch for monitoring API calls (async stuff also started/monitored there)
+- ECS Cluster for async long tasks
+
 ## API Endpoints
 
 ### List Available Functions

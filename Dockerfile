@@ -1,12 +1,23 @@
-# Use Ubuntu as base for FreeSurfer compatibility
-FROM ubuntu:24.04
+# Use Ubuntu 22.04 for FreeSurfer compatibility
+# Force amd64 platform as FreeSurfer only supports x86_64
+FROM --platform=linux/amd64 ubuntu:22.04
 
 # Prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Install software-properties-common for add-apt-repository
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add deadsnakes PPA for Python 3.12
+RUN add-apt-repository ppa:deadsnakes/ppa -y
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     python3.12 \
+    python3.12-venv \
+    python3.12-dev \
     python3-pip \
     wget \
     curl \
@@ -18,8 +29,8 @@ RUN apt-get update && apt-get install -y \
     libxt6 \
     libxcomposite1 \
     libfreetype6 \
-    libjpeg62-dev \
-    libtiff6 \
+    libjpeg62 \
+    libtiff5 \
     libpng16-16 \
     libxcursor1 \
     libxinerama1 \
@@ -30,19 +41,30 @@ RUN apt-get update && apt-get install -y \
     libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install python3-venv and setuptools for virtual environment support
-RUN apt-get update && apt-get install -y python3.12-venv python3-setuptools && rm -rf /var/lib/apt/lists/*
-
-# Install FreeSurfer (using a minimal version for faster builds)
-# Note: In production, you should use the full FreeSurfer installation
-# For now, we'll create a placeholder
-RUN mkdir -p /usr/local/freesurfer && \
-    echo "FreeSurfer placeholder - replace with actual installation" > /usr/local/freesurfer/README
+# Download FreeSurfer 8.1.0 (separate step for better caching during development)
+# Try to copy local file if it exists (wildcard prevents failure if missing)
+COPY freesurfer_ubuntu22-8.1.0_amd64.deb* .
+# Download if not present
+RUN if [ ! -f freesurfer_ubuntu22-8.1.0_amd64.deb ]; then \
+      echo "Downloading FreeSurfer 8.1.0..."; \
+      wget -q https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb; \
+    else \
+      echo "Using local FreeSurfer package"; \
+    fi
 
 # Set FreeSurfer environment variables
 ENV FREESURFER_HOME=/usr/local/freesurfer
 ENV PATH=$FREESURFER_HOME/bin:$PATH
+
+# Install FreeSurfer
+RUN apt-get update && \
+    apt-get install -y ./freesurfer_ubuntu22-8.1.0_amd64.deb && \
+    rm freesurfer_ubuntu22-8.1.0_amd64.deb && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy FreeSurfer license file
 ENV FS_LICENSE=$FREESURFER_HOME/license.txt
+COPY freesurfer_license.txt $FREESURFER_HOME/license.txt
 
 # Create app directory
 WORKDIR /app

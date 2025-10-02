@@ -211,6 +211,9 @@ Resources:
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: X86_64  # Required for FreeSurfer compatibility
+        OperatingSystemFamily: LINUX
       Cpu: '4096'  # 4 vCPU
       Memory: '30720'  # 30 GB RAM for FreeSurfer
       ExecutionRoleArn: !Ref ECSExecutionRole
