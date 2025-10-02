@@ -9,7 +9,6 @@ import psutil
 from datetime import datetime
 
 from utilities.inngest import client as inngest_client
-from utilities.data import supabase
 from utilities.supabase_utilities import download_nifti_file, get_nifti_file
 
 FUNCTION_NAME = "freesurfer_recon_all"

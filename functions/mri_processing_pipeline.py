@@ -99,7 +99,7 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
     try:
         # STEP 1: Resample Atlas (Lambda sync)
         print("\n" + "="*80)
-        print("STEP 1/6: Resampling Atlas")
+        print("STEP 1/8: Resampling Atlas")
         print("="*80)
         results['resample_atlas'] = call_lambda_sync(
             'resample_atlas_for_user_nifti',
@@ -109,7 +109,7 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
 
         # STEP 2: Calculate ROI Volumes (Lambda sync)
         print("\n" + "="*80)
-        print("STEP 2/6: Calculating ROI Volumes")
+        print("STEP 2/8: Calculating ROI Volumes")
         print("="*80)
         results['roi_volumes'] = call_lambda_sync(
             'calculate_roi_volumes',
@@ -119,7 +119,7 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
 
         # STEP 3: FreeSurfer Recon-All (ECS async - LONG!)
         print("\n" + "="*80)
-        print("STEP 3/6: FreeSurfer Recon-All")
+        print("STEP 3/8: FreeSurfer Recon-All")
         print("⚠️  This step takes 4-8 hours")
         print("="*80)
         results['freesurfer'] = call_lambda_async(
@@ -138,7 +138,7 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
 
         # STEP 4: Store FreeSurfer Files (Lambda sync)
         print("\n" + "="*80)
-        print("STEP 4/6: Storing FreeSurfer Files")
+        print("STEP 4/8: Storing FreeSurfer Files")
         print("="*80)
         results['store_files'] = call_lambda_sync(
             'freesurfer_store_files',
@@ -150,9 +150,23 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
         )
         results['steps_completed'].append('store_files')
 
-        # STEP 5: Parse Statistics (Lambda sync)
+        # STEP 5: Generate Surface Files (Lambda sync)
         print("\n" + "="*80)
-        print("STEP 5/6: Parsing Statistics")
+        print("STEP 5/8: Generating Surface Files (.asc)")
+        print("="*80)
+        results['surface_files'] = call_lambda_sync(
+            'generate_surface_files',
+            {
+                'nifti_file_id': nifti_file_id,
+                'freesurfer_output_directory': freesurfer_dir,
+                'subject_id': subject_id
+            }
+        )
+        results['steps_completed'].append('surface_files')
+
+        # STEP 6: Parse Statistics (Lambda sync)
+        print("\n" + "="*80)
+        print("STEP 6/8: Parsing Statistics")
         print("="*80)
         results['parse_statistics'] = call_lambda_sync(
             'freesurfer_parse_statistics',
@@ -164,26 +178,33 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
         )
         results['steps_completed'].append('parse_statistics')
 
-        # STEP 6: Convert Annotations (Lambda sync × 2)
+        # STEP 7: Generate Visualization Data (Lambda sync)
         print("\n" + "="*80)
-        print("STEP 6/6: Converting Annotations to JSON")
+        print("STEP 7/8: Generating Visualization Data")
         print("="*80)
-        results['annotations'] = {}
+        results['visualization'] = call_lambda_sync(
+            'generate_visualization_data',
+            {
+                'nifti_file_id': nifti_file_id,
+                'parcellation': 'custom_regions_de_ki'
+            }
+        )
+        results['steps_completed'].append('visualization_data')
 
-        for hemi in ['lh', 'rh']:
-            print(f"\n  Processing {hemi} hemisphere...")
-            annot_path = os.path.join(freesurfer_dir, 'label', f'{hemi}.aparc.annot')
-            results['annotations'][hemi] = call_lambda_sync(
-                'annot-to-json',
-                {'annot_file_path': annot_path}
-            )
-
-        results['steps_completed'].append('annot_to_json')
+        # STEP 8: Calculate Memory Metrics (Lambda sync)
+        print("\n" + "="*80)
+        print("STEP 8/8: Calculating Memory Metrics")
+        print("="*80)
+        results['memory_metrics'] = call_lambda_sync(
+            'calculate_memory_metrics',
+            {'nifti_file_id': nifti_file_id}
+        )
+        results['steps_completed'].append('memory_metrics')
 
         # SUCCESS!
         print("\n" + "="*80)
         print("🎉 PIPELINE COMPLETE!")
-        print(f"Steps completed: {len(results['steps_completed'])}/6")
+        print(f"Steps completed: {len(results['steps_completed'])}/8")
         print(f"Finished: {datetime.now().isoformat()}")
         print("="*80)
 
@@ -222,8 +243,10 @@ if __name__ == "__main__":
     print("2. Calculate ROI volumes (~30s)")
     print("3. FreeSurfer recon-all (4-8 hours)")
     print("4. Store FreeSurfer files (~1 min)")
-    print("5. Parse statistics (~30s)")
-    print("6. Convert annotations (~20s)")
+    print("5. Generate surface files (.asc) (~1 min)")
+    print("6. Parse statistics (~30s)")
+    print("7. Generate visualization data (custom_regions_de_ki) (~30s)")
+    print("8. Calculate memory metrics (~30s)")
     print("\nTotal expected time: 4-8 hours")
     print("All steps will be tracked as separate tasks in the dashboard\n")
 

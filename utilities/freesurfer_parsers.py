@@ -283,22 +283,22 @@ def parse_freesurfer_stats_directory(stats_dir: str) -> Dict[str, Any]:
 def get_summary_statistics(parsed_stats: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract key summary statistics from parsed FreeSurfer data.
-    
+
     Returns:
         Dictionary with the most important measurements for quick analysis
     """
     summary = {}
-    
+
     # Global brain measures from aseg
     if parsed_stats.get("aseg") and "global_measures" in parsed_stats["aseg"]:
         measures = parsed_stats["aseg"]["global_measures"]
         summary.update({
             "total_brain_volume": measures.get("BrainSeg", {}).get("value"),
-            "total_cortex_volume": measures.get("Cortex", {}).get("value"), 
+            "total_cortex_volume": measures.get("Cortex", {}).get("value"),
             "total_white_matter": measures.get("CerebralWhiteMatter", {}).get("value"),
             "estimated_total_intracranial_volume": measures.get("EstimatedTotalIntraCranialVol", {}).get("value")
         })
-    
+
     # Hemisphere volumes from aparc
     for hemi in ["lh", "rh"]:
         aparc_key = f"{hemi}_aparc"
@@ -307,7 +307,7 @@ def get_summary_statistics(parsed_stats: Dict[str, Any]) -> Dict[str, Any]:
             summary[f"{hemi}_cortex_volume"] = measures.get("Cortex", {}).get("value")
             summary[f"{hemi}_surface_area"] = measures.get("WhiteSurfArea", {}).get("value")
             summary[f"{hemi}_mean_thickness"] = measures.get("MeanThickness", {}).get("value")
-    
+
     # Curvature summary
     for hemi in ["lh", "rh"]:
         curv_key = f"{hemi}_curv"
@@ -315,5 +315,47 @@ def get_summary_statistics(parsed_stats: Dict[str, Any]) -> Dict[str, Any]:
             curv = parsed_stats[curv_key]["curvature_stats"]
             summary[f"{hemi}_mean_curvature"] = curv.get("curv_mean")
             summary[f"{hemi}_surface_area_from_curv"] = curv.get("surface_area")
-    
+
     return summary
+
+
+def parse_annot_file(annot_file_path: str) -> Dict[str, Any]:
+    """
+    Convert FreeSurfer annotation (.annot) file to structured dictionary format.
+    Core utility function for annotation parsing and conversion.
+
+    Args:
+        annot_file_path: Path to the .annot file
+
+    Returns:
+        Dictionary with vertex labels and region definitions
+    """
+    import nibabel as nb
+    import numpy as np
+
+    # Read the annotation file
+    labels, ctab, names = nb.freesurfer.read_annot(annot_file_path)
+
+    # Initialize structures
+    vertex_labels = []
+    regions = {}
+
+    # Process color table and create regions
+    for i, (r, g, b, a, label) in enumerate(ctab):
+        name = names[i].decode('utf-8') if isinstance(names[i], bytes) else names[i]
+        regions[i] = {
+            "id": i,
+            "name": name,
+            "color": {"r": int(r), "g": int(g), "b": int(b), "a": 255}
+        }
+
+    # The labels array already contains the correct indices (0 to N-1)
+    vertex_labels = [int(l) for l in labels]
+
+    return {
+        "labels": vertex_labels,
+        "regions": regions,
+        "num_vertices": len(vertex_labels),
+        "num_regions": len(regions),
+        "unique_labels": len(set(vertex_labels))
+    }
