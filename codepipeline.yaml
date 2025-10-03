@@ -353,18 +353,13 @@ Resources:
                     ]
                 InputArtifacts:
                   - Name: BuildArtifactAsZip
-          - !Ref AWS::NoValue
-
-        - !If
-          - IsMainBranchPipeline
-          - Name: BuildAndPushEngine
-            Actions:
               - Name: BuildEngineImage
                 ActionTypeId:
                   Category: Build
                   Owner: AWS
                   Provider: CodeBuild
                   Version: "1"
+                RunOrder: 2 # same as DeployProd to run in parallel
                 Configuration:
                   ProjectName: !Ref CodeBuildProjectEngineImage
                   EnvironmentVariables: !Sub |
@@ -376,7 +371,6 @@ Resources:
                     ]
                 InputArtifacts:
                   - Name: SourceCodeAsZip
-                RunOrder: 1
           - !Ref AWS::NoValue
 
   PipelineArtifactsBucket:

@@ -4,6 +4,8 @@ phases:
     commands:
       - echo Logging in to Amazon ECR...
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ENGINE_IMAGE_REPOSITORY
+      - echo Downloading FreeSurfer from S3...
+      - aws s3 cp s3://$BUILD_ASSETS_BUCKET/freesurfer_ubuntu22-8.1.0_amd64.deb . --region $AWS_DEFAULT_REGION || echo "FreeSurfer not in S3, will download from Harvard server during build"
       - echo Build started on `date`
   build:
     commands:

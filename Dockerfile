@@ -16,15 +16,13 @@ RUN apt-get update && apt-get install -y \
 # Add deadsnakes PPA for Python 3.12
 RUN add-apt-repository ppa:deadsnakes/ppa -y
 
-# Install system dependencies including AWS CLI
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     python3.12 \
     python3.12-venv \
     python3.12-dev \
     python3-pip \
     wget \
-    curl \
-    unzip \
     libgomp1 \
     libglu1-mesa \
     libglib2.0-0 \
@@ -45,21 +43,14 @@ RUN apt-get update && apt-get install -y \
     libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install AWS CLI for S3 downloads
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
-    unzip awscliv2.zip && \
-    ./aws/install && \
-    rm -rf awscliv2.zip aws
-
-# Download FreeSurfer 8.1.0 from S3 (much faster than Harvard's server)
-# Try to copy local file if it exists (wildcard prevents failure if missing)
+# Copy FreeSurfer .deb file if it exists (downloaded by buildspec or provided locally)
+# Wildcard prevents failure if missing
 COPY freesurfer_ubuntu22-8.1.0_amd64.deb* .
-# Download from S3 if not present locally
+
+# Download from Harvard server if not present locally (fallback)
 RUN if [ ! -f freesurfer_ubuntu22-8.1.0_amd64.deb ]; then \
-      echo "Downloading FreeSurfer 8.1.0 from S3..."; \
-      aws s3 cp s3://${BUILD_ASSETS_BUCKET}/freesurfer_ubuntu22-8.1.0_amd64.deb . --region us-east-2 || \
-      (echo "S3 download failed, falling back to Harvard server..."; \
-       wget -q https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb); \
+      echo "FreeSurfer package not found locally, downloading from Harvard server..."; \
+      wget -q https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb; \
     else \
       echo "Using local FreeSurfer package"; \
     fi
