@@ -452,6 +452,44 @@ Resources:
               Bool:
                 aws:SecureTransport: false
 
+  BuildAssetsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: brainyes-build-assets-7
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  BuildAssetsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BuildAssetsBucket
+      PolicyDocument:
+        Statement:
+          - Effect: "Deny"
+            Action: "s3:*"
+            Principal: "*"
+            Resource:
+              - !Sub "${BuildAssetsBucket.Arn}/*"
+              - !GetAtt BuildAssetsBucket.Arn
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Action:
+              - s3:*
+            Effect: Allow
+            Resource:
+              - !Sub arn:${AWS::Partition}:s3:::${BuildAssetsBucket}
+              - !Sub arn:${AWS::Partition}:s3:::${BuildAssetsBucket}/*
+            Principal:
+              AWS:
+                - !GetAtt CodeBuildServiceRole.Arn
+
   CodePipelineExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -636,9 +674,10 @@ Resources:
                   - "s3:GetObject"
                   - "s3:GetObjectVersion"
                   - "s3:ListBucket"
+                  - "s3:HeadObject"
                 Resource:
-                  - "arn:aws:s3:::brainyes-build-assets/*"
-                  - "arn:aws:s3:::brainyes-build-assets"
+                  - !Sub "${BuildAssetsBucket.Arn}/*"
+                  - !GetAtt BuildAssetsBucket.Arn
         - PolicyName: AssumeStagePipExecutionRoles
           PolicyDocument:
             Version: "2012-10-17"
@@ -836,7 +875,7 @@ Resources:
         PrivilegedMode: true
         EnvironmentVariables:
           - Name: BUILD_ASSETS_BUCKET
-            Value: brainyes-build-assets
+            Value: !Ref BuildAssetsBucket
       ServiceRole: !GetAtt CodeBuildServiceRole.Arn
       Source:
         Type: CODEPIPELINE

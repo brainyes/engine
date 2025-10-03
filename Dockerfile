@@ -57,7 +57,7 @@ COPY freesurfer_ubuntu22-8.1.0_amd64.deb* .
 # Download from S3 if not present locally
 RUN if [ ! -f freesurfer_ubuntu22-8.1.0_amd64.deb ]; then \
       echo "Downloading FreeSurfer 8.1.0 from S3..."; \
-      aws s3 cp s3://${BUILD_ASSETS_BUCKET}/freesurfer_ubuntu22-8.1.0_amd64.deb . --region us-east-2 --no-sign-request || \
+      aws s3 cp s3://${BUILD_ASSETS_BUCKET}/freesurfer_ubuntu22-8.1.0_amd64.deb . --region us-east-2 || \
       (echo "S3 download failed, falling back to Harvard server..."; \
        wget -q https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb); \
     else \
