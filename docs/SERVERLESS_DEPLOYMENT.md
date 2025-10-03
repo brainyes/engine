@@ -42,7 +42,7 @@ sam local invoke ListFunctionsHandler
 Run local API Gateway with Lambda functions: 
 
 ```
-sam local start-api --warm-containers eager --env-vars env.json
+sam local start-api --warm-containers eager --env-vars env.json --profile brainyes
 ```
 
 ### 4. Build Docker Image

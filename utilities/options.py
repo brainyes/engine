@@ -7,6 +7,8 @@ load_dotenv()
 silent_run = True
 save_assets = True
 
+# API Configuration
+LAMBDA_API_URL = os.environ.get('LAMBDA_API_URL', 'https://<api-id>.execute-api.us-east-2.amazonaws.com/prod')
 
 # Get the script's directory
 script_dir = os.path.join(os.path.dirname(__file__), '../research')

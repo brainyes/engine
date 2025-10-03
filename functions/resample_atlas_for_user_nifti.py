@@ -10,7 +10,7 @@ from nilearn.image import resample_img
 
 from utilities.options import silent_run, output_dir, save_assets, atlas_file_path
 from utilities.data import supabase
-from utilities.supabase_utilities import get_nifti_file
+from utilities.supabase_utilities import get_nifti_file, upload_resampled_atlas
 from utilities.utilities import prefix_file_in_path
 from utilities.inngest import client as inngest_client
 
@@ -22,10 +22,6 @@ def resample_atlas_for_user_nifti(nifti_file_id):
     atlas_img = nib.load(atlas_file_path)
 
     resampled_atlas = resample_img(atlas_img, target_affine=user_nifti.affine, target_shape=user_nifti.shape)
-    # temp_file = tempfile.NamedTemporaryFile(prefix="resampled_atlas_",
-    #                                         suffix="nii.gz",
-    #                                         delete=False)
-    # resampled_atlas.to_filename(temp_file.name)
     voxel_size = np.abs(np.linalg.det(resampled_atlas.affine[:3, :3]))
 
     if save_assets or not silent_run:
@@ -36,19 +32,9 @@ def resample_atlas_for_user_nifti(nifti_file_id):
         if not silent_run:
             plt.show()
 
-    upload_res = supabase.storage.from_("nifti_gz_files").upload(
-        file=resampled_atlas.to_bytes(), path=prefix_file_in_path("atlas-resampled", storage_object['name']),
-        file_options={"content-type": "application/octet-stream; charset=binary", "upsert": "true"})
-    upload_obj = upload_res.json()
-
-    atlas_sampled_nifti_file = supabase.schema("public").table("nifti_files").upsert({
-        "id": upload_obj['Id'],
-        "parent_nifti_file_id": nifti_file['id'],
-        "user_id": nifti_file['user_id'],
-        "file_type": "atlas-sampled.nii"
-    }).execute().data
-
-    print("Saved Atlas-sample nifti file: ", atlas_sampled_nifti_file)
+    # Upload resampled atlas to storage
+    storage_path = upload_resampled_atlas(nifti_file_id, resampled_atlas.to_bytes())
+    print(f"✅ Uploaded resampled atlas to: {storage_path}")
 
     # save voxel_size
     user_meta = (supabase.schema("public")
@@ -57,7 +43,7 @@ def resample_atlas_for_user_nifti(nifti_file_id):
 
     print("Saved voxel size: ", user_meta)
 
-    return atlas_sampled_nifti_file, user_meta
+    return {"storage_path": storage_path, "voxel_size": voxel_size, "user_meta": user_meta}
 
 @inngest_client.create_function(
     fn_id="resample_atlas_for_user_nifti",

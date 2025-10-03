@@ -56,6 +56,35 @@ def download_nifti_file(nifti_file = None, storage_object = None):
     nifti_gz_data = supabase.storage.from_("nifti_gz_files").download(storage_object['name'])
     return save_to_temp_file(nifti_gz_data, storage_object['name'])
 
+def upload_resampled_atlas(nifti_file_id, file_data):
+    """
+    Upload resampled atlas for a given nifti file.
+    Uses known storage path pattern: {nifti_file_id}/atlas-resampled.nii
+
+    Args:
+        nifti_file_id: The nifti file ID
+        file_data: The file data (bytes) to upload
+
+    Returns:
+        The storage path where the file was uploaded
+    """
+    storage_path = f"{nifti_file_id}/atlas-resampled.nii"
+    supabase.storage.from_("nifti_gz_files").upload(
+        file=file_data,
+        path=storage_path,
+        file_options={"content-type": "application/octet-stream; charset=binary", "upsert": "true"}
+    )
+    return storage_path
+
+def download_resampled_atlas(nifti_file_id):
+    """
+    Download resampled atlas for a given nifti file.
+    Uses known storage path pattern: {nifti_file_id}/atlas-resampled.nii
+    """
+    storage_path = f"{nifti_file_id}/atlas-resampled.nii"
+    atlas_data = supabase.storage.from_("nifti_gz_files").download(storage_path)
+    return save_to_temp_file(atlas_data, "atlas-resampled.nii")
+
 def get_user_meta(user_id, meta_key):
     meta_value = (supabase.schema("public").table("usermeta")
             .select("meta_value")

@@ -6,25 +6,22 @@ import os
 
 from utilities.inngest import client as inngest_client
 from utilities.data import supabase
-from utilities.supabase_utilities import get_nifti_file, get_user_meta
+from utilities.supabase_utilities import get_nifti_file, get_user_meta, download_resampled_atlas
 
 
 def calculate_roi_volumes(nifti_file_id):
+    # Get the user's original nifti file
     response = supabase.schema("public").rpc("get_file_type_among_children", {"p_nifti_file_id": nifti_file_id,
                                                                              "p_file_type": "nii"}).single().execute()
     user_nifti_file = response.data
     user_nifti_file, _, user_nifti_gz_path = get_nifti_file(user_nifti_file, True)
     user_nifti = nib.load(user_nifti_gz_path)
 
-    response = supabase.schema("public").rpc("get_file_type_among_children", {"p_nifti_file_id": nifti_file_id,
-                                                                             "p_file_type": "atlas-sampled.nii"}).maybe_single().execute()
-    if response.data is None:
-        raise Exception("No atlas sampled")
-    atlas_sampled_nifti_file = response.data
-    atlas_sampled_nifti_file, _, atlas_sampled_nifti_gz_path = get_nifti_file(atlas_sampled_nifti_file, True)
+    # Download resampled atlas from storage
+    atlas_sampled_nifti_gz_path = download_resampled_atlas(nifti_file_id)
     atlas_sampled_nifti = nib.load(atlas_sampled_nifti_gz_path)
 
-    voxel_size = get_user_meta(atlas_sampled_nifti_file['user_id'], 'voxel_size')
+    voxel_size = get_user_meta(user_nifti_file['user_id'], 'voxel_size')
     if voxel_size is None:
         raise Exception("User's voxel size was not determined.")
 
