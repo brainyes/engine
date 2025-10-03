@@ -2,6 +2,9 @@
 # Force amd64 platform as FreeSurfer only supports x86_64
 FROM --platform=linux/amd64 ubuntu:22.04
 
+# Build argument for S3 bucket name
+ARG BUILD_ASSETS_BUCKET=brainyes-build-assets
+
 # Prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -13,7 +16,7 @@ RUN apt-get update && apt-get install -y \
 # Add deadsnakes PPA for Python 3.12
 RUN add-apt-repository ppa:deadsnakes/ppa -y
 
-# Install system dependencies
+# Install system dependencies including AWS CLI
 RUN apt-get update && apt-get install -y \
     python3.12 \
     python3.12-venv \
@@ -21,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     wget \
     curl \
+    unzip \
     libgomp1 \
     libglu1-mesa \
     libglib2.0-0 \
@@ -41,13 +45,21 @@ RUN apt-get update && apt-get install -y \
     libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Download FreeSurfer 8.1.0 (separate step for better caching during development)
+# Install AWS CLI for S3 downloads
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -rf awscliv2.zip aws
+
+# Download FreeSurfer 8.1.0 from S3 (much faster than Harvard's server)
 # Try to copy local file if it exists (wildcard prevents failure if missing)
 COPY freesurfer_ubuntu22-8.1.0_amd64.deb* .
-# Download if not present
+# Download from S3 if not present locally
 RUN if [ ! -f freesurfer_ubuntu22-8.1.0_amd64.deb ]; then \
-      echo "Downloading FreeSurfer 8.1.0..."; \
-      wget -q https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb; \
+      echo "Downloading FreeSurfer 8.1.0 from S3..."; \
+      aws s3 cp s3://${BUILD_ASSETS_BUCKET}/freesurfer_ubuntu22-8.1.0_amd64.deb . --region us-east-2 --no-sign-request || \
+      (echo "S3 download failed, falling back to Harvard server..."; \
+       wget -q https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb); \
     else \
       echo "Using local FreeSurfer package"; \
     fi

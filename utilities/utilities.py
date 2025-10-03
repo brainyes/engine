@@ -4,6 +4,8 @@ import gzip
 import io
 from matplotlib import pyplot as plt
 
+import utilities.error_handling as error_handling
+error_handling.init()
 
 def save_to_temp_file(nifti_gz_data, original_name_or_extension=".nii", prefix="cerebro_"):
     """

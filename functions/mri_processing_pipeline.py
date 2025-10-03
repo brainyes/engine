@@ -145,6 +145,9 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
         results['error'] = str(e)
         results['failed_at_step'] = len(results['steps_completed']) + 1
 
+        import sentry_sdk
+        sentry_sdk.capture_exception(e)
+
         raise
 
 

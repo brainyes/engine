@@ -8,8 +8,8 @@ phases:
   build:
     commands:
       - echo Build started on `date`
-      - echo Building the Docker image for ECS Engine...          
-      - docker build -f Dockerfile -t engine:latest .
+      - echo Building the Docker image for ECS Engine...
+      - docker build -f Dockerfile -t engine:latest --build-arg BUILD_ASSETS_BUCKET=$BUILD_ASSETS_BUCKET .
       - docker tag engine:latest $ENGINE_IMAGE_REPOSITORY:latest
       - docker tag engine:latest $ENGINE_IMAGE_REPOSITORY:$CODEBUILD_BUILD_NUMBER
   post_build:

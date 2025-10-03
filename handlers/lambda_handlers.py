@@ -13,6 +13,9 @@ load_dotenv()
 
 # Import Supabase client
 from utilities.data import supabase
+import utilities.error_handling as error_handling
+
+error_handling.init()
 
 # Add parent directory to path to import functions
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -152,10 +155,16 @@ def generic_function_handler(event, context):
         
     except Exception as e:
         import traceback
+        import sentry_sdk
+
         error_msg = str(e)
         error_trace = traceback.format_exc()
         print(f"ERROR: {error_msg}")
         print(f"TRACEBACK: {error_trace}")
+
+        # Capture exception in Sentry
+        sentry_sdk.capture_exception(e)
+
         return create_response(500, {
             'success': False,
             'error': error_msg,
@@ -220,6 +229,8 @@ def async_task_handler(event, context):
         })
         
     except Exception as e:
+        import sentry_sdk
+        sentry_sdk.capture_exception(e)
         return create_response(500, {
             'success': False,
             'error': str(e)
@@ -238,6 +249,8 @@ def list_functions_handler(event, context):
         })
         
     except Exception as e:
+        import sentry_sdk
+        sentry_sdk.capture_exception(e)
         return create_response(500, {
             'success': False,
             'error': str(e)
@@ -265,6 +278,8 @@ def get_task_status_handler(event, context):
         })
         
     except Exception as e:
+        import sentry_sdk
+        sentry_sdk.capture_exception(e)
         return create_response(500, {
             'success': False,
             'error': str(e)
@@ -356,6 +371,8 @@ def get_task_logs_handler(event, context):
             })
 
     except Exception as e:
+        import sentry_sdk
+        sentry_sdk.capture_exception(e)
         return create_response(500, {
             'success': False,
             'error': str(e)
@@ -439,7 +456,9 @@ def sqs_to_ecs_handler(event, context):
             except Exception as e:
                 print(f"Error processing SQS record: {str(e)}")
                 import traceback
+                import sentry_sdk
                 print(f"Traceback: {traceback.format_exc()}")
+                sentry_sdk.capture_exception(e)
                 continue
 
         return {
@@ -450,7 +469,9 @@ def sqs_to_ecs_handler(event, context):
     except Exception as e:
         print(f"Error in sqs_to_ecs_handler: {str(e)}")
         import traceback
+        import sentry_sdk
         print(f"Traceback: {traceback.format_exc()}")
+        sentry_sdk.capture_exception(e)
         return {
             'statusCode': 500,
             'body': json.dumps({'success': False, 'error': str(e)})
@@ -545,7 +566,9 @@ def ecs_task_event_handler(event, context):
     except Exception as e:
         print(f"Error processing ECS task event: {str(e)}")
         import traceback
+        import sentry_sdk
         print(f"Traceback: {traceback.format_exc()}")
+        sentry_sdk.capture_exception(e)
         return {
             'statusCode': 500,
             'body': json.dumps({'success': False, 'error': str(e)})
@@ -596,6 +619,8 @@ def router_handler(event, context):
             })
             
     except Exception as e:
+        import sentry_sdk
+        sentry_sdk.capture_exception(e)
         return create_response(500, {
             'success': False,
             'error': f'Router error: {str(e)}'

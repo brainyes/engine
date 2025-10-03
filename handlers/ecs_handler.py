@@ -21,6 +21,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 load_dotenv()
 
+import utilities.error_handling as error_handling
+error_handling.init()
+
 # Import utilities
 from utilities.data import supabase
 
@@ -126,7 +129,9 @@ class TaskRunner:
             print(f"Updated task {self.task_id} status to {status}")
             
         except Exception as e:
+            import sentry_sdk
             print(f"Error updating task status: {str(e)}")
+            sentry_sdk.capture_exception(e)
     
     def send_notification(self, subject: str, message: str):
         """Send SNS notification"""
@@ -141,7 +146,9 @@ class TaskRunner:
             )
             print(f"Sent notification: {subject}")
         except Exception as e:
+            import sentry_sdk
             print(f"Error sending notification: {str(e)}")
+            sentry_sdk.capture_exception(e)
     
     def process_message(self, message: Dict[str, Any]):
         """Process a single SQS message"""
@@ -213,23 +220,27 @@ class TaskRunner:
             print(f"Total container runtime: {(datetime.now(timezone.utc) - self.start_time).total_seconds():.2f} seconds")
             
         except Exception as e:
+            import sentry_sdk
             error_msg = str(e)
             error_trace = traceback.format_exc()
             full_error = f"Error processing task: {error_msg}\n{error_trace}"
             print(f"ERROR: {error_msg}")
             print(f"TRACEBACK: {error_trace}")
-            
+
+            # Capture exception in Sentry
+            sentry_sdk.capture_exception(e)
+
             # Update status to failed (only if we have a task_id)
             if self.task_id:
                 self.update_task_status('failed', error=full_error)
-            
+
             # Send failure notification (only if we have task_id)
             if self.task_id:
                 self.send_notification(
                     f"Task {self.task_id} failed",
                     f"Function: {self.function_name}\nError: {full_error}"
                 )
-            
+
             # Don't delete the message - let it go to DLQ after retries
             raise
     
@@ -307,11 +318,15 @@ class TaskRunner:
                 print(f"Total container runtime: {(datetime.now(timezone.utc) - self.start_time).total_seconds():.2f} seconds")
 
             except Exception as e:
+                import sentry_sdk
                 error_msg = str(e)
                 error_trace = traceback.format_exc()
                 full_error = f"Error processing task: {error_msg}\n{error_trace}"
                 print(f"ERROR: {error_msg}")
                 print(f"TRACEBACK: {error_trace}")
+
+                # Capture exception in Sentry
+                sentry_sdk.capture_exception(e)
 
                 if self.task_id:
                     self.update_task_status('failed', error=full_error)
@@ -351,8 +366,13 @@ class TaskRunner:
                 self.process_message(message)
 
             except Exception as e:
+                import sentry_sdk
                 print(f"Fatal error in task runner: {str(e)}")
                 print(f"Traceback: {traceback.format_exc()}")
+
+                # Capture exception in Sentry
+                sentry_sdk.capture_exception(e)
+
                 # Send notification if possible
                 if self.task_id:
                     self.send_notification(
