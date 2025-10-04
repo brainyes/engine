@@ -9,6 +9,7 @@ Description: >
   - BuildAndPackage (MainGitBranch only)
   - DeployTest (MainGitBranch only) (disabled)
   - DeployProd (MainGitBranch only)
+  - BuildEngine (MainGitBranch only, requires manual approval)
 
   **WARNING** You will be billed for the AWS resources used if you create a stack from this template.
 
@@ -353,13 +354,28 @@ Resources:
                     ]
                 InputArtifacts:
                   - Name: BuildArtifactAsZip
+          - !Ref AWS::NoValue
+
+        - !If
+          - IsMainBranchPipeline
+          - Name: BuildEngine
+            Actions:
+              - Name: ApproveEngineBuild
+                ActionTypeId:
+                  Category: Approval
+                  Owner: AWS
+                  Provider: Manual
+                  Version: "1"
+                Configuration:
+                  CustomData: "Approve to build and deploy new ECS engine image (takes ~10 minutes, includes FreeSurfer)"
+                RunOrder: 1
               - Name: BuildEngineImage
                 ActionTypeId:
                   Category: Build
                   Owner: AWS
                   Provider: CodeBuild
                   Version: "1"
-                RunOrder: 2 # same as DeployProd to run in parallel
+                RunOrder: 2
                 Configuration:
                   ProjectName: !Ref CodeBuildProjectEngineImage
                   EnvironmentVariables: !Sub |
