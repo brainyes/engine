@@ -14,12 +14,15 @@ LAMBDA_API_URL = os.environ.get('LAMBDA_API_URL', 'https://<api-id>.execute-api.
 script_dir = os.path.join(os.path.dirname(__file__), '../research')
 dataset_dir = os.path.join(script_dir, 'input')
 
-# Use /tmp for output in Lambda (read-only filesystem except /tmp)
+# Use /tmp for output in AWS (Lambda/ECS have read-only filesystems except /tmp)
 # Otherwise use research/output for local development
-if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') or os.environ.get('ECS_CONTAINER_METADATA_URI'):
     output_dir = '/tmp'
 else:
     output_dir = os.path.join(script_dir, 'output')
+
+# Create output directory if it doesn't exist
+os.makedirs(output_dir, exist_ok=True)
 
 atlas_file_path = os.path.join(dataset_dir, 'HarvardOxford-cort-maxprob-thr25-2mm.nii.gz')
 oasis_bids_tsv_path = os.path.join(dataset_dir, 'tsv_files', 'lab_1', 'OASIS_BIDS.tsv')

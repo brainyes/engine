@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y \
     python3.12-dev \
     python3-pip \
     wget \
+    dcm2niix \
     libgomp1 \
     libglu1-mesa \
     libglib2.0-0 \
