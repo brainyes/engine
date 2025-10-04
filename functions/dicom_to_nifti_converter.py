@@ -148,12 +148,12 @@ def dicom_to_nifti_converter(dicom_series_id, **kwargs):
             with open(local_file_path, 'wb') as f:
                 f.write(file_data)
 
-            # Anonymize and extract metadata
-            metadata = anonymize_dicom(local_file_path)
+            # Extract metadata (preserving PHI since user uploads their own data)
+            metadata = extract_dicom_metadata(local_file_path)
             if metadata:
                 all_metadata.append(metadata)
 
-        print(f"Downloaded and anonymized {len(files_response)} DICOM files")
+        print(f"Downloaded and extracted metadata from {len(files_response)} DICOM files")
 
         # 2. Run dcm2niix conversion
         print("Running dcm2niix conversion...")
