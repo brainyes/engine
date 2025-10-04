@@ -8,16 +8,11 @@ ARG BUILD_ASSETS_BUCKET=brainyes-build-assets
 # Prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install software-properties-common for add-apt-repository
-RUN apt-get update && apt-get install -y \
+# Install all system dependencies in one layer for better caching
+RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
-
-# Add deadsnakes PPA for Python 3.12
-RUN add-apt-repository ppa:deadsnakes/ppa -y
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-venv \
     python3.12-dev \
@@ -79,7 +74,8 @@ COPY requirements.txt .
 # Create virtual environment and install Python dependencies
 RUN python3.12 -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY functions/ ./functions/

@@ -13,7 +13,8 @@ phases:
       - echo Pulling previous image for layer caching...
       - docker pull $ENGINE_IMAGE_REPOSITORY:latest || true
       - echo Building the Docker image for ECS Engine with cache...
-      - docker build -f Dockerfile -t engine:latest --cache-from $ENGINE_IMAGE_REPOSITORY:latest --build-arg BUILD_ASSETS_BUCKET=$BUILD_ASSETS_BUCKET .
+      - export DOCKER_BUILDKIT=1
+      - docker build -f Dockerfile -t engine:latest --cache-from $ENGINE_IMAGE_REPOSITORY:latest --build-arg BUILD_ASSETS_BUCKET=$BUILD_ASSETS_BUCKET --build-arg BUILDKIT_INLINE_CACHE=1 .
       - docker tag engine:latest $ENGINE_IMAGE_REPOSITORY:latest
       - docker tag engine:latest $ENGINE_IMAGE_REPOSITORY:$CODEBUILD_BUILD_NUMBER
   post_build:
