@@ -9,10 +9,8 @@ ARG BUILD_ASSETS_BUCKET=brainyes-build-assets
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install all system dependencies in one layer for better caching
+# Python 3.12 is available in Ubuntu 22.04 universe repository (no PPA needed)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa -y \
-    && apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-venv \
     python3.12-dev \

@@ -2,6 +2,31 @@ version: 0.2
 phases:
   pre_build:
     commands:
+      - echo Checking if engine build is needed...
+      - |
+        COMMIT_MSG=$(git log -1 --pretty=%B)
+        if echo "$COMMIT_MSG" | grep -q "\[build-engine\]"; then
+          echo "Engine build triggered by commit message"
+          export BUILD_ENGINE=true
+        elif echo "$COMMIT_MSG" | grep -q "\[skip-engine\]"; then
+          echo "Engine build explicitly skipped"
+          export BUILD_ENGINE=false
+        else
+          echo "Checking for relevant file changes..."
+          CHANGED_FILES=$(git diff --name-only HEAD~1)
+          if echo "$CHANGED_FILES" | grep -qE "(Dockerfile|handlers/ecs_handler.py)"; then
+            echo "Engine-relevant files changed, building engine"
+            export BUILD_ENGINE=true
+          else
+            echo "No engine-relevant changes detected, skipping build"
+            export BUILD_ENGINE=false
+          fi
+        fi
+      - |
+        if [ "$BUILD_ENGINE" = "false" ]; then
+          echo "Skipping engine build - no changes detected and no [build-engine] tag in commit"
+          exit 0
+        fi
       - echo Logging in to Amazon ECR...
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ENGINE_IMAGE_REPOSITORY
       - echo Downloading FreeSurfer from S3...
