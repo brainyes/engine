@@ -14,7 +14,6 @@ Storage Structure:
         ...
 """
 
-import inngest
 import os
 import argparse
 import subprocess
@@ -22,10 +21,11 @@ import tempfile
 import shutil
 from pathlib import Path
 import pydicom
+import requests
 from datetime import datetime
 
-from utilities.inngest import client as inngest_client
 from utilities.data import supabase
+from utilities.options import LAMBDA_API_URL
 
 FUNCTION_NAME = "dicom_to_nifti_converter"
 
@@ -203,9 +203,9 @@ def dicom_to_nifti_converter(dicom_series_id, **kwargs):
 
         # 5. Create nifti_files database record
         nifti_record = {
-            'id': upload_response.data['id'],
             'user_id': user_id,
             'file_type': 'nii',
+            'file_path': storage_path,
         }
 
         nifti_response = supabase.table('nifti_files') \
@@ -223,11 +223,6 @@ def dicom_to_nifti_converter(dicom_series_id, **kwargs):
             .eq('id', dicom_series_id) \
             .execute()
 
-        # 7. Optionally delete DICOM files from storage (to save space)
-        # Uncomment if you want to delete after successful conversion
-        # files_to_delete = [f"{dicom_path}/{file_info['name']}" for file_info in files_response]
-        # supabase.storage.from_('nifti_gz_files').remove(files_to_delete)
-
         result = {
             'dicom_series_id': dicom_series_id,
             'nifti_file_id': nifti_file_id,
@@ -238,36 +233,39 @@ def dicom_to_nifti_converter(dicom_series_id, **kwargs):
         }
 
         print(f"Conversion completed: {result}")
+
+        # Trigger async MRI processing pipeline task
+        if nifti_file_id and user_id:
+            try:
+                print(f"Triggering MRI processing pipeline for NIfTI file: {nifti_file_id}")
+                async_url = f"{LAMBDA_API_URL}/async/mri_processing_pipeline"
+                async_response = requests.post(
+                    async_url,
+                    json={
+                        'nifti_file_id': nifti_file_id,
+                        'user_id': user_id
+                    },
+                    timeout=30
+                )
+
+                if async_response.status_code == 200:
+                    task_info = async_response.json()
+                    task_id = task_info.get('task_id')
+                    print(f"✅ MRI processing pipeline task submitted: {task_id}")
+                    result['mri_pipeline_task_id'] = task_id
+                else:
+                    print(f"⚠️  Warning: Failed to trigger MRI processing pipeline task: {async_response.status_code} - {async_response.text}")
+
+            except Exception as e:
+                print(f"⚠️  Warning: Error triggering MRI processing pipeline task: {str(e)}")
+                # Don't fail the conversion if async trigger fails
+
         return result
 
     finally:
         # Cleanup temporary directories
         shutil.rmtree(dicom_dir, ignore_errors=True)
         shutil.rmtree(output_dir, ignore_errors=True)
-
-
-@inngest_client.create_function(
-    fn_id=FUNCTION_NAME,
-    trigger=inngest.TriggerEvent(event=f"{FUNCTION_NAME}_requested"),
-)
-async def fn(ctx: inngest.Context, step: inngest.Step):
-    """Inngest function wrapper for workflow automation"""
-    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-    result = await step.run("execute-function", lambda: dicom_to_nifti_converter(**parameters))
-
-    # Trigger FreeSurfer pipeline with the new NIfTI file
-    if result.get('nifti_file_id'):
-        await inngest_client.send(
-            inngest.Event(
-                name="mri_processing_pipeline_requested",
-                data={
-                    "nifti_file_id": result['nifti_file_id'],
-                    "user_id": parameters.get('user_id')
-                }
-            )
-        )
-
-    return result
 
 
 # Command line interface

@@ -36,6 +36,26 @@ python -m functions.annot-to-json research/input/raw/lh.custom_regions_de_ki.ann
 # Get help for any function
 python -m functions.function_name --help
 ```
+### Automated Testing
+```bash
+# Run quick tests (recommended before commits)
+python tests/test_functions.py
+
+# Run all tests including slow ones
+python tests/test_functions.py --full
+
+# Test specific function
+python tests/test_functions.py --function calculate_roi_volumes
+
+# Show detailed errors
+python tests/test_functions.py --verbose
+```
+
+The test suite uses pre-existing data:
+- NIFTI ID: `d7db5b0a-d967-4dcc-9c7d-43d8d4a48dc9`
+- DICOM Series ID: `cb5ff621-12f7-4b80-9d31-4ff96df99fa6`
+
+See `tests/README.md` for more details.
 
 ## Architecture Overview
 

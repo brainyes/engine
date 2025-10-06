@@ -15,3 +15,4 @@ boto3
 aws-lambda-powertools
 requests
 sentry-sdk
+dcm2niix
