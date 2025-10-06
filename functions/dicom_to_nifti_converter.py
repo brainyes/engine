@@ -200,26 +200,57 @@ def dicom_to_nifti_converter(dicom_series_id, **kwargs):
         storage_file_name = f"{user_id}/{timestamp}_from_dicom.nii"
 
         # Upload .nii (uncompressed) version only
+        print(f"Uploading to path: {storage_file_name}")
         upload_res = supabase.storage.from_('nifti_gz_files').upload(
             file=nifti_data,
             path=storage_file_name,
             file_options={"content-type": "application/octet-stream; charset=binary", "upsert": "true"}
         )
-        upload_obj = upload_res.json()
+        print(f"Upload response: {upload_res}")
 
-        # Create nifti_files record
-        nifti_file = supabase.table('nifti_files').upsert({
-            'id': upload_obj['Id'],
-            'user_id': user_id,
-            'file_type': 'nii'
-        }).execute().data[0]
+        # Get the storage object to retrieve its ID
+        # Query storage.objects table to get the ID for this path
+        print(f"Querying storage.objects for bucket_id=nifti_gz_files, name={storage_file_name}")
+        storage_objects = supabase.schema('storage').table('objects').select('id').eq('bucket_id', 'nifti_gz_files').eq('name', storage_file_name).execute()
+        print(f"Storage objects query result: {storage_objects}")
+
+        if not storage_objects.data or len(storage_objects.data) == 0:
+            raise Exception(f"Could not find storage object for path: {storage_file_name}")
+
+        storage_id = storage_objects.data[0]['id']
+        print(f"Storage object ID: {storage_id}")
+
+        # Create nifti_files record using storage object ID
+        print(f"Creating nifti_files record with id={storage_id}, user_id={user_id}, file_type=nii")
+        try:
+            # Switch back to public schema (after querying storage.objects)
+            nifti_insert_response = supabase.schema('public').table('nifti_files').insert({
+                'id': storage_id,
+                'user_id': user_id,
+                'file_type': 'nii'
+            }).execute()
+
+            print(f"Insert response: {nifti_insert_response}")
+            if nifti_insert_response.data and len(nifti_insert_response.data) > 0:
+                nifti_file = nifti_insert_response.data[0]
+            else:
+                # If insert doesn't return data, query it back
+                nifti_file = supabase.schema('public').table('nifti_files').select('*').eq('id', storage_id).single().execute().data
+        except Exception as insert_error:
+            print(f"Insert error details: {insert_error}")
+            print(f"Insert error type: {type(insert_error)}")
+            print(f"Insert error args: {insert_error.args}")
+            import traceback
+            traceback.print_exc()
+            raise
 
         nifti_file_id = nifti_file['id']
 
-        # 6. Update dicom_series table with nifti_file_id
+        # 6. Update dicom_series table with nifti_file_id and mark as completed
         supabase.table('dicom_series') \
             .update({
                 'nifti_file_id': nifti_file_id,
+                'conversion_status': 'completed',
                 'conversion_completed_at': datetime.now().isoformat()
             }) \
             .eq('id', dicom_series_id) \
@@ -239,13 +270,15 @@ def dicom_to_nifti_converter(dicom_series_id, **kwargs):
         # Trigger async MRI processing pipeline task
         if nifti_file_id and user_id:
             try:
-                print(f"Triggering MRI processing pipeline for NIfTI file: {nifti_file_id}")
+                print(f"Triggering MRI processing pipeline for NIfTI file: {nifti_file_id} at URL: {LAMBDA_API_URL}")
                 async_url = f"{LAMBDA_API_URL}/async/mri_processing_pipeline"
                 async_response = requests.post(
                     async_url,
                     json={
-                        'nifti_file_id': nifti_file_id,
-                        'user_id': user_id
+                        'parameters': {
+                            'nifti_file_id': nifti_file_id,
+                            'user_id': user_id
+                        }
                     },
                     timeout=30
                 )

@@ -14,7 +14,7 @@ def call_lambda_sync(function_name, parameters):
     print(f"  → URL: {url}")
     print(f"  → Parameters: {parameters}")
 
-    response = requests.post(url, json=parameters, timeout=900)  # 15 min timeout
+    response = requests.post(url, json={'parameters': parameters}, timeout=900)  # 15 min timeout
 
     if response.status_code != 200:
         raise Exception(f"Lambda call failed: {response.status_code} - {response.text}")
@@ -34,7 +34,7 @@ def call_lambda_async(function_name, parameters):
     print(f"  → Parameters: {parameters}")
 
     # Start async task
-    response = requests.post(url, json=parameters, timeout=30)
+    response = requests.post(url, json={'parameters': parameters}, timeout=30)
 
     if response.status_code != 200:
         raise Exception(f"Async task start failed: {response.status_code} - {response.text}")
