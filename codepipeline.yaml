@@ -613,6 +613,15 @@ Resources:
                   - "cloudformation:ValidateTemplate"
                 Resource:
                   - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"
+        - PolicyName: SNSPublishAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sns:Publish"
+                Resource:
+                  - !Ref PipelineApprovalTopic
 
   # PipelineStackCloudFormationExecutionRole is used for the pipeline to self mutate
   PipelineStackCloudFormationExecutionRole:
