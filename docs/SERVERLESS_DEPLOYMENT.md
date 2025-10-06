@@ -47,9 +47,13 @@ sam local start-api --warm-containers eager --env-vars env.json --profile brainy
 
 ### 4. Build Docker Image
 
+Tip: Especially during Docker development, if you don't want to deal with download [freesurfer_ubuntu22-8.1.0_amd64.deb](../freesurfer_ubuntu22-8.1.0_amd64.deb) all the time, you can download it once here:
+
+And store it in the root directory [./freesurfer_ubuntu22-8.1.0_amd64.deb](../freesurfer_ubuntu22-8.1.0_amd64.deb) so Dockerfile that file instead of downloading every time you build the engine container. 
+
 ```bash
 # Build the Docker image for ECS tasks
-docker build -t cerebro-engine .
+docker build -t brainyes-engine .
 
 # Create ECR repository
 aws ecr create-repository --repository-name brainyes-engine
@@ -213,7 +217,7 @@ GET /api/tasks/{task_id}/logs
 ### Synchronous Call Example (TypeScript)
 ```typescript
 // Option 1: Function name in path (cleaner)
-const response = await fetch(`${CEREBRO_ENGINE_URL}/api/function/calculate_roi_volumes`, {
+const response = await fetch(`${BRAINYES_ENGINE_URL}/api/function/calculate_roi_volumes`, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json'
@@ -224,7 +228,7 @@ const response = await fetch(`${CEREBRO_ENGINE_URL}/api/function/calculate_roi_v
 });
 
 // Option 2: Function name in body (more flexible)
-const response = await fetch(`${CEREBRO_ENGINE_URL}/api/function`, {
+const response = await fetch(`${BRAINYES_ENGINE_URL}/api/function`, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json'
@@ -244,7 +248,7 @@ const result = await response.json();
 ```typescript
 // For long-running operations
 // 1. Submit task (using path method)
-const submitResponse = await fetch(`${CEREBRO_ENGINE_URL}/api/async/freesurfer_recon_all`, {
+const submitResponse = await fetch(`${BRAINYES_ENGINE_URL}/api/async/freesurfer_recon_all`, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json'
@@ -257,7 +261,7 @@ const submitResponse = await fetch(`${CEREBRO_ENGINE_URL}/api/async/freesurfer_r
 });
 
 // Or using body method
-const submitResponse = await fetch(`${CEREBRO_ENGINE_URL}/api/async`, {
+const submitResponse = await fetch(`${BRAINYES_ENGINE_URL}/api/async`, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json'
@@ -274,7 +278,7 @@ const { task_id } = await submitResponse.json();
 
 // 2. Poll for status
 const checkStatus = async () => {
-  const statusResponse = await fetch(`${CEREBRO_ENGINE_URL}/api/tasks/${task_id}/status`);
+  const statusResponse = await fetch(`${BRAINYES_ENGINE_URL}/api/tasks/${task_id}/status`);
   const { task } = await statusResponse.json();
   
   if (task.status === 'completed') {
@@ -290,7 +294,7 @@ const checkStatus = async () => {
 checkStatus();
 
 // 3. List available functions
-const functionsResponse = await fetch(`${CEREBRO_ENGINE_URL}/api/functions`);
+const functionsResponse = await fetch(`${BRAINYES_ENGINE_URL}/api/functions`);
 const { functions } = await functionsResponse.json();
 console.log('Available functions:', functions);
 ```

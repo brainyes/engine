@@ -225,18 +225,6 @@ async def fn(ctx: inngest.Context, step: inngest.Step):
     parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
     result = await step.run("parse-statistics", lambda: freesurfer_parse_statistics(**parameters))
     
-    # TODO: Optionally trigger next step in pipeline (e.g., file storage)
-    # if result['status'] == 'completed':
-    #     await inngest_client.send(
-    #         inngest.Event(
-    #             name="freesurfer_store_files_requested", 
-    #             data={
-    #                 "nifti_file_id": parameters["nifti_file_id"],
-    #                 "freesurfer_output_directory": parameters["freesurfer_output_directory"]
-    #             }
-    #         )
-    #     )
-    
     return result
 
 
@@ -272,9 +260,6 @@ if __name__ == "__main__":
             print(f"Files processed: {result['statistics']['files_parsed']}")
             print(f"Global measures: {result['statistics']['global_measures_stored']}")
             print(f"Regional measures: {result['statistics']['regional_measures_stored']}")
-            print("\nNext steps:")
-            print("- Check database for stored measurements")
-            print("- Run file storage function to save binary data")
         else:
             print("❌ Statistics parsing failed")
             print(f"Error: {result.get('error', 'Unknown error')}")

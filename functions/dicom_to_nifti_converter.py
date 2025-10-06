@@ -294,7 +294,6 @@ if __name__ == "__main__":
         print("✅ Successfully converted DICOM to NIfTI")
         print(f"NIfTI File ID: {result['nifti_file_id']}")
         print(f"Files processed: {result['file_count']}")
-        print(f"\nNext step: FreeSurfer processing will start automatically")
 
     except Exception as e:
         print(f"❌ Error during conversion: {str(e)}")

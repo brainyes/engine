@@ -122,23 +122,23 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
         results['steps_completed'].append('roi_volumes')
 
         # STEP 3: FreeSurfer Recon-All (ECS async - LONG!)
-        # print("\n" + "="*80)
-        # print("STEP 3/8: FreeSurfer Recon-All")
-        # print("⚠️  This step takes 4-8 hours")
-        # print("="*80)
-        # results['freesurfer'] = call_lambda_async(
-        #     'freesurfer_recon_all',
-        #     {'nifti_file_id': nifti_file_id, 'user_id': user_id}
-        # )
-        # results['steps_completed'].append('freesurfer_recon_all')
-        #
-        # # Extract FreeSurfer outputs for next steps
-        # freesurfer_result = results['freesurfer'].get('function_result', results['freesurfer'])
-        # freesurfer_dir = freesurfer_result['output_directory']
-        # subject_id = freesurfer_result['subject_id']
-        #
-        # print(f"  📁 FreeSurfer output: {freesurfer_dir}")
-        # print(f"  👤 Subject ID: {subject_id}")
+        print("\n" + "="*80)
+        print("STEP 3/8: FreeSurfer Recon-All")
+        print("⚠️  This step takes 4-8 hours")
+        print("="*80)
+        results['freesurfer'] = call_lambda_async(
+            'freesurfer_recon_all',
+            {'nifti_file_id': nifti_file_id, 'user_id': user_id}
+        )
+        results['steps_completed'].append('freesurfer_recon_all')
+
+        # Extract FreeSurfer outputs for next steps
+        freesurfer_result = results['freesurfer'].get('function_result', results['freesurfer'])
+        freesurfer_dir = freesurfer_result['output_directory']
+        subject_id = freesurfer_result['subject_id']
+
+        print(f"  📁 FreeSurfer output: {freesurfer_dir}")
+        print(f"  👤 Subject ID: {subject_id}")
 
         # STEP 4: Store FreeSurfer Files (Lambda sync)
 

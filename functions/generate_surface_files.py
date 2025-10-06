@@ -186,12 +186,6 @@ async def fn(ctx: inngest.Context, step: inngest.Step):
     parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
     result = await step.run("generate-surface-files", lambda: generate_surface_files(**parameters))
 
-    # Optionally trigger next step
-    # if result['status'] == 'completed':
-    #     await inngest_client.send(
-    #         inngest.Event(name="next_step_requested", data={"nifti_file_id": parameters["nifti_file_id"]})
-    #     )
-
     return result
 
 
@@ -230,11 +224,6 @@ if __name__ == "__main__":
             print(f"\n📁 Files created:")
             for key, path in result['surface_files'].items():
                 print(f"   - {key}: {path}")
-
-            print(f"\n💡 Next steps:")
-            print("   - Access files via Supabase storage API")
-            print("   - Use .asc files for 3D brain surface rendering")
-            print(f"   - Storage bucket: {result['storage_bucket']}")
 
         else:
             print(f"\n=== GENERATION FAILED ===")

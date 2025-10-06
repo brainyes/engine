@@ -166,11 +166,6 @@ async def fn(ctx: inngest.Context, step: inngest.Step):
     parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
     result = await step.run("generate-visualization-data", lambda: generate_visualization_data(**parameters))
 
-    # Optionally trigger next step in visualization pipeline
-    # await inngest_client.send(
-    #     inngest.Event(name="next_visualization_step_requested", data={"nifti_file_id": parameters["nifti_file_id"]})
-    # )
-
     return result
 
 
@@ -212,11 +207,6 @@ if __name__ == "__main__":
             summary = result['regions_summary']
             print(f"   - Left hemisphere: {summary['lh_vertices']:,} vertices, {summary['lh_regions']} regions")
             print(f"   - Right hemisphere: {summary['rh_vertices']:,} vertices, {summary['rh_regions']} regions")
-
-            print(f"\n💡 Next steps:")
-            print("   - Access files via Supabase storage API")
-            print("   - Use JSON data for 3D brain visualization")
-            print(f"   - All outputs centralized in bucket: {result['storage_bucket']}")
             print(f"   - Path: {result['storage_path']}/")
 
         else:

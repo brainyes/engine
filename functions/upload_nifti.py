@@ -102,12 +102,6 @@ if __name__=="__main__":
         print("IMPORTANT: Save these IDs for the next steps!")
         print(f"📋 Main file ID: {res[0]['id']}")
         print(f"👤 User ID: {res[0]['user_id']}")
-        print("\nNext steps:")
-        print("1. Copy the Main file ID above")
-        print("2. Run atlas resampling:")
-        print(f"   python -m functions.resample_atlas_for_user_nifti {res[0]['id']}")
-        print("3. Run volume calculation:")
-        print(f"   python -m functions.calculate_roi_volumes {res[0]['id']}")
         
     except Exception as e:
         print(f"❌ Error during upload: {str(e)}")

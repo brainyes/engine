@@ -57,7 +57,8 @@ RUN if [ ! -f freesurfer_ubuntu22-8.1.0_amd64.deb ]; then \
     fi
 
 # Set FreeSurfer environment variables
-ENV FREESURFER_HOME=/usr/local/freesurfer
+ENV FREESURFER_HOME=/usr/local/freesurfer/8.1.0
+ENV FREESURFER=$FREESURFER_HOME
 ENV PATH=$FREESURFER_HOME/bin:$PATH
 
 # Install FreeSurfer

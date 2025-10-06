@@ -71,8 +71,6 @@ if __name__=="__main__":
         result = resample_atlas_for_user_nifti(args.file_id)
         print("\n=== ATLAS RESAMPLING COMPLETE ===")
         print("Result:", result)
-        print("\nNext step: Run volume calculation with the same file ID:")
-        print(f"python -m functions.calculate_roi_volumes {args.file_id}")
         
     except Exception as e:
         print(f"❌ Error during atlas resampling: {str(e)}")

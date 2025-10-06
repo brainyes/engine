@@ -109,6 +109,7 @@ def freesurfer_recon_all(nifti_file_id, **kwargs):
         
         # Check if output directory was created
         subject_output_dir = os.path.join(subjects_dir, subject_id)
+        os.makedirs(subject_output_dir, exist_ok=True)
         if not os.path.exists(subject_output_dir):
             raise Exception(f"FreeSurfer output directory not found: {subject_output_dir}")
         
@@ -200,9 +201,6 @@ if __name__ == "__main__":
             print("✅ FreeSurfer recon-all completed successfully")
             print(f"Output directory: {result['output_directory']}")
             print(f"Processing time: {result['processing_time_seconds']:.1f} seconds")
-            print("\nNext steps:")
-            print("- Examine the output directory for results")
-            print("- Run statistical analysis on the generated data")
         else:
             print("❌ FreeSurfer processing failed")
             print(f"Error: {result.get('error', 'Unknown error')}")

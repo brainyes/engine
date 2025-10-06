@@ -251,10 +251,6 @@ if __name__ == "__main__":
             
             if result['status'] == 'partial':
                 print(f"⚠️  {stats['files_failed']} files failed to upload")
-            
-            print("\nNext steps:")
-            print("- Files are now accessible via object storage")
-            print("- Check database for file inventory")
         else:
             print("❌ File storage failed")
             print(f"Error: {result.get('error', 'Unknown error')}")
