@@ -11,11 +11,16 @@ Usage:
 """
 
 import sys
+import os
 import argparse
 from typing import Dict, List, Callable, Optional
 import traceback
 import io
 from contextlib import redirect_stdout, redirect_stderr
+
+# Add project root to Python path so we can import functions
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
 
 # Test data - these IDs are already in the database
 TEST_NIFTI_ID = "d7db5b0a-d967-4dcc-9c7d-43d8d4a48dc9"

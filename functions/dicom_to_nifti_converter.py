@@ -19,6 +19,7 @@ import argparse
 import subprocess
 import tempfile
 import shutil
+import gzip
 from pathlib import Path
 import pydicom
 import requests
@@ -190,29 +191,30 @@ def dicom_to_nifti_converter(dicom_series_id, **kwargs):
         print("Uploading NIfTI file to storage...")
 
         with open(nifti_file_path, 'rb') as f:
-            nifti_data = f.read()
+            nifti_gz_data = f.read()
+
+        # Decompress to get .nii version (we only store uncompressed)
+        nifti_data = gzip.decompress(nifti_gz_data)
 
         timestamp = int(datetime.now().timestamp() * 1000)
-        storage_path = f"{user_id}/{timestamp}_from_dicom.nii.gz"
+        storage_file_name = f"{user_id}/{timestamp}_from_dicom.nii"
 
-        upload_response = supabase.storage.from_('nifti_gz_files').upload(
-            storage_path,
-            nifti_data,
-            {'contentType': 'application/gzip'}
+        # Upload .nii (uncompressed) version only
+        upload_res = supabase.storage.from_('nifti_gz_files').upload(
+            file=nifti_data,
+            path=storage_file_name,
+            file_options={"content-type": "application/octet-stream; charset=binary", "upsert": "true"}
         )
+        upload_obj = upload_res.json()
 
-        # 5. Create nifti_files database record
-        nifti_record = {
+        # Create nifti_files record
+        nifti_file = supabase.table('nifti_files').upsert({
+            'id': upload_obj['Id'],
             'user_id': user_id,
-            'file_type': 'nii',
-            'file_path': storage_path,
-        }
+            'file_type': 'nii'
+        }).execute().data[0]
 
-        nifti_response = supabase.table('nifti_files') \
-            .insert(nifti_record) \
-            .execute()
-
-        nifti_file_id = nifti_response.data[0]['id']
+        nifti_file_id = nifti_file['id']
 
         # 6. Update dicom_series table with nifti_file_id
         supabase.table('dicom_series') \
