@@ -308,8 +308,8 @@ Resources:
       RuntimePlatform:
         CpuArchitecture: X86_64  # Required for FreeSurfer compatibility
         OperatingSystemFamily: LINUX
-      Cpu: '8192'  # 2 vCPU
-      Memory: '16384'  # 8 GB RAM
+      Cpu: '16384'  # 2 vCPU
+      Memory: '32768'  # 8 GB RAM
       EphemeralStorage:
         SizeInGiB: 200  # Maximum for Fargate - needed for 30GB FreeSurfer image extraction
       ExecutionRoleArn: !Ref EcsExecutionRole
