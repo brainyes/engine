@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple test runner for cerebro-engine functions
+Simple test runner for brainyes-engine functions
 
 Tests each function with known good test data to ensure code changes don't break existing functionality.
 
@@ -249,7 +249,7 @@ def print_results(results: List[TestResult], verbose: bool = False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Test cerebro-engine functions')
+    parser = argparse.ArgumentParser(description='Test brainyes-engine functions')
     parser.add_argument('--full', action='store_true', help='Run all tests including slow ones')
     parser.add_argument('--function', type=str, help='Test only a specific function')
     parser.add_argument('--verbose', '-v', action='store_true', help='Show detailed error messages')
@@ -277,7 +277,7 @@ def main():
 
     # Print test plan
     print("\n" + "="*70)
-    print("CEREBRO-ENGINE FUNCTION TESTS")
+    print("BRAINYES-ENGINE FUNCTION TESTS")
     print("="*70)
     print(f"Mode: {'FULL' if args.full else 'QUICK'}")
     print(f"Test data: NIFTI ID={TEST_NIFTI_ID}, DICOM ID={TEST_DICOM_SERIES_ID}")

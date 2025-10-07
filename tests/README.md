@@ -1,4 +1,4 @@
-# Cerebro Engine Tests
+# BrainYes Engine Tests
 
 Simple test suite for verifying function integrity after code changes.
 
@@ -93,7 +93,7 @@ python tests/test_functions.py --full
 
 ```
 ======================================================================
-CEREBRO-ENGINE FUNCTION TESTS
+BRAINYES-ENGINE FUNCTION TESTS
 ======================================================================
 Mode: QUICK
 Test data: NIFTI ID=d7db5b0a-d967-4dcc-9c7d-43d8d4a48dc9, DICOM ID=cb5ff621-12f7-4b80-9d31-4ff96df99fa6

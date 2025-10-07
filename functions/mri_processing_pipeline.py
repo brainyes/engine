@@ -28,7 +28,7 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
     """
 
     print("="*80)
-    print(f"🧠 CEREBRO MRI PROCESSING PIPELINE (LOCAL/SYNC)")
+    print(f"🧠 BRAINYES MRI PROCESSING PIPELINE (LOCAL/SYNC)")
     print(f"NIFTI File ID: {nifti_file_id}")
     print(f"ECS Task ID: {os.environ.get('TASK_ID', 'unknown')}")
     print(f"Started: {datetime.now().isoformat()}")

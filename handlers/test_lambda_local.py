@@ -74,7 +74,7 @@ def test_freesurfer_parse_statistics():
     event = {
         'body': json.dumps({
             'function_name': 'freesurfer_parse_statistics',
-            'parameters': {'nifti_file_id': 'd7db5b0a-d967-4dcc-9c7d-43d8d4a48dc9', 'freesurfer_output_directory': '/Users/oytuntez/dev/cerebro-engine/research/input/raw/sub-OASIS10001'}
+            'parameters': {'nifti_file_id': 'd7db5b0a-d967-4dcc-9c7d-43d8d4a48dc9', 'freesurfer_output_directory': '/Users/oytuntez/dev/brainyes-engine/research/input/raw/sub-OASIS10001'}
         })
     }
     result = generic_function_handler(event, {})
@@ -88,7 +88,7 @@ def test_freesurfer_store_files():
     event = {
         'body': json.dumps({
             'function_name': 'freesurfer_store_files',
-            'parameters': {'nifti_file_id': 'd7db5b0a-d967-4dcc-9c7d-43d8d4a48dc9', 'freesurfer_output_directory': '/Users/oytuntez/dev/cerebro-engine/research/input/raw/sub-OASIS10001'}
+            'parameters': {'nifti_file_id': 'd7db5b0a-d967-4dcc-9c7d-43d8d4a48dc9', 'freesurfer_output_directory': '/Users/oytuntez/dev/brainyes-engine/research/input/raw/sub-OASIS10001'}
         })
     }
     result = generic_function_handler(event, {})

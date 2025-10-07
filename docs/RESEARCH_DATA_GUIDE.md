@@ -1,6 +1,6 @@
 # Research Data Guide
 
-This guide explains how scientific data is organized and accessed in the Cerebro system.
+This guide explains how scientific data is organized and accessed in the BrainYes system.
 
 ## 📁 Directory Structure
 

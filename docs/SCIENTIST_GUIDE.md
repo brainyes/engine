@@ -1,6 +1,6 @@
-# Cerebro Backend Guide for Scientists
+# BrainYes Backend Guide for Scientists
 
-This guide will help you use the Cerebro system to analyze NIFTI brain images. You don't need to be a programmer to use these tools - just follow the examples below.
+This guide will help you use the BrainYes system to analyze NIFTI brain images. You don't need to be a programmer to use these tools - just follow the examples below.
 
 ## Prerequisites
 
@@ -38,7 +38,7 @@ python -m functions.upload_nifti /path/to/your/brain_scan.nii.gz
 
 **Expected output:**
 ```
-=== CEREBRO NIFTI UPLOAD ===
+=== BRAINYES NIFTI UPLOAD ===
 Uploading NIFTI file: your_file.nii.gz
 ...
 📋 Main file ID: 97d321f3-405f-4a27-a96a-2b53e0f1c899

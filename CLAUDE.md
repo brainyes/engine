@@ -284,8 +284,8 @@ image_repository = "<AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/lambda"
 #### Local Development
 ```bash
 # Build Docker images
-docker build -t cerebro-engine .
-docker build -f Dockerfile.lambda -t cerebro-lambda .
+docker build -t brainyes-engine .
+docker build -f Dockerfile.lambda -t brainyes-lambda .
 
 # SAM local testing
 sam build --profile brainyes --template-file template-docker.yaml
@@ -311,7 +311,7 @@ aws ecr get-login-password --region us-east-2 --profile brainyes | \
   docker login --username AWS --password-stdin <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com
 
 # Push images
-docker tag cerebro-lambda:latest <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/lambda:latest
+docker tag brainyes-lambda:latest <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/lambda:latest
 docker push <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/lambda:latest
 ```
 

@@ -3,6 +3,6 @@ import logging
 import inngest
 
 client = inngest.Inngest(
-    app_id="cerebro",
+    app_id="brainyes",
     logger=logging.getLogger("uvicorn"),
 )

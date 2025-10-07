@@ -7,13 +7,13 @@ from matplotlib import pyplot as plt
 import utilities.error_handling as error_handling
 error_handling.init()
 
-def save_to_temp_file(nifti_gz_data, original_name_or_extension=".nii", prefix="cerebro_"):
+def save_to_temp_file(nifti_gz_data, original_name_or_extension=".nii", prefix="brainyes_"):
     """
     Save downloaded Supabase file data to a temporary file.
 
     Args:
         nifti_gz_data: The binary data from Supabase storage
-        prefix: Prefix for the temp filename (default: "cerebro_")
+        prefix: Prefix for the temp filename (default: "brainyes_")
         suffix: Suffix for the temp filename (default: ".nii.gz")
 
     Returns:

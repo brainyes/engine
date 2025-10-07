@@ -12,9 +12,9 @@ The `nifti_gz_files` bucket currently has **3 different directory patterns**:
 ```
 
 **Source**:
-- `cerebro-app/app/api/v1/mri/route.ts:294` - User uploaded NIfTI
-- `cerebro-engine/functions/upload_nifti.py:36` - User uploaded NIfTI
-- `cerebro-engine/functions/dicom_to_nifti_converter.py:200` - DICOM converted to NIfTI
+- `brainyes-app/app/api/v1/mri/route.ts:294` - User uploaded NIfTI
+- `brainyes-engine/functions/upload_nifti.py:36` - User uploaded NIfTI
+- `brainyes-engine/functions/dicom_to_nifti_converter.py:200` - DICOM converted to NIfTI
 
 **Example**: `13c794ba-ad74-4dd6-af93-2a5496b71f0d/1749438481.717726.nii`
 
@@ -24,7 +24,7 @@ The `nifti_gz_files` bucket currently has **3 different directory patterns**:
 ```
 
 **Source**:
-- `cerebro-app/app/api/v1/mri/route.ts:192` - DICOM series upload
+- `brainyes-app/app/api/v1/mri/route.ts:192` - DICOM series upload
 
 **Example**: `13c794ba.../dicom/cb5ff621-12f7-4b80-9d31-4ff96df99fa6/file001.dcm`
 
@@ -41,9 +41,9 @@ The `nifti_gz_files` bucket currently has **3 different directory patterns**:
 ```
 
 **Source**:
-- `cerebro-engine/utilities/supabase_utilities.py:71` - Resampled atlas
-- `cerebro-engine/functions/freesurfer_store_files.py:119` - FreeSurfer outputs
-- `cerebro-engine/functions/generate_surface_files.py:119` - Visualization files
+- `brainyes-engine/utilities/supabase_utilities.py:71` - Resampled atlas
+- `brainyes-engine/functions/freesurfer_store_files.py:119` - FreeSurfer outputs
+- `brainyes-engine/functions/generate_surface_files.py:119` - Visualization files
 
 **Example**: `44ae2d38-f83c-4893-9459-6c309c9838d0/atlas-resampled.nii`
 
@@ -159,7 +159,7 @@ This means the file location is determined by the storage object's `name` field,
 
 **App Changes**:
 ```typescript
-// cerebro-app/app/api/v1/mri/route.ts:192
+// brainyes-app/app/api/v1/mri/route.ts:192
 // BEFORE
 const storagePath = `${userId}/dicom/${seriesId}/${file.name}`
 await supabase.storage.from('nifti_gz_files').upload(...)
@@ -170,7 +170,7 @@ await supabase.storage.from('dicom_files').upload(...)
 ```
 
 ```typescript
-// cerebro-app/app/api/v1/mri/route.ts:294
+// brainyes-app/app/api/v1/mri/route.ts:294
 // BEFORE
 const storagePath = `${userId}/${timestamp}.nii`
 await supabase.storage.from('nifti_gz_files').upload(...)
@@ -182,7 +182,7 @@ await supabase.storage.from('nifti_files').upload(...)
 
 **Engine Changes**:
 ```python
-# cerebro-engine/functions/dicom_to_nifti_converter.py:131
+# brainyes-engine/functions/dicom_to_nifti_converter.py:131
 # BEFORE
 dicom_path = f"{user_id}/dicom/{dicom_series_id}"
 files_response = supabase.storage.from_('nifti_gz_files').list(dicom_path)
@@ -193,7 +193,7 @@ files_response = supabase.storage.from_('dicom_files').list(dicom_path)
 ```
 
 ```python
-# cerebro-engine/functions/dicom_to_nifti_converter.py:200
+# brainyes-engine/functions/dicom_to_nifti_converter.py:200
 # BEFORE
 storage_file_name = f"{user_id}/{timestamp}_from_dicom.nii"
 
@@ -242,8 +242,8 @@ UPDATE storage.buckets SET name = 'nifti_files' WHERE name = 'nifti_gz_files';
 
 ## 📚 Related Files
 
-- `cerebro-app/app/api/v1/mri/route.ts` - Handles all file uploads
-- `cerebro-engine/functions/dicom_to_nifti_converter.py` - DICOM conversion
-- `cerebro-engine/functions/upload_nifti.py` - NIfTI upload (legacy)
-- `cerebro-engine/utilities/supabase_utilities.py` - Storage helpers
-- `cerebro-app/supabase/migrations/20251003100000_add_nifti_gz_files_storage_policies.sql` - Storage policies
+- `brainyes-app/app/api/v1/mri/route.ts` - Handles all file uploads
+- `brainyes-engine/functions/dicom_to_nifti_converter.py` - DICOM conversion
+- `brainyes-engine/functions/upload_nifti.py` - NIfTI upload (legacy)
+- `brainyes-engine/utilities/supabase_utilities.py` - Storage helpers
+- `brainyes-app/supabase/migrations/20251003100000_add_nifti_gz_files_storage_policies.sql` - Storage policies

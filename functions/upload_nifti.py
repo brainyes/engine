@@ -75,7 +75,7 @@ async def fn(ctx: inngest.Context, step: inngest.Step):
 
 # example:
 if __name__=="__main__":
-    parser = argparse.ArgumentParser(description='Upload a NIFTI brain scan file to Cerebro for analysis')
+    parser = argparse.ArgumentParser(description='Upload a NIFTI brain scan file to BrainYes for analysis')
     parser.add_argument('nifti_file', help='Path to the NIFTI file (.nii or .nii.gz)')
     parser.add_argument('--public-id', type=int, default=1, help='Public ID for the analysis session (default: 1)')
     
@@ -87,7 +87,7 @@ if __name__=="__main__":
         print("Please check the file path and try again.")
         os._exit(1)
     
-    print("=== CEREBRO NIFTI UPLOAD ===")
+    print("=== BRAINYES NIFTI UPLOAD ===")
     print(f"Uploading NIFTI file: {args.nifti_file}")
     print("This will upload your brain scan and prepare it for analysis...")
     print("Please wait, this may take 30-60 seconds...\n")

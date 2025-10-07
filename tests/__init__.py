@@ -1,5 +1,5 @@
 """
-Cerebro Engine Test Suite
+BrainYes Engine Test Suite
 
 Simple test framework for validating function integrity.
 """
