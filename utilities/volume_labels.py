@@ -1,3 +1,5 @@
+import numpy as np
+
 # Dictionary of Harvard-Oxford cortical regions
 ho_cortical = {
     1: "Frontal Pole",
@@ -75,29 +77,23 @@ ho_subcortical = {
     21: "Right Accumbens"
 }
 
-# Modified version of your code
-roi_volumes = {}
-roi_names = {}
+# Combine cortical and subcortical dictionaries into one
+volume_labels_dict = {**ho_cortical, **ho_subcortical}
 
-for roi_label in np.unique(atlas_data):
-    if roi_label == 0:  # Skip background
-        continue
+# Helper function to get region name
+def get_region_name(roi_label: int) -> str:
+    """
+    Get the human-readable name for a ROI label
 
-    roi_mask = (atlas_data == roi_label)
-    roi_voxel_count = np.sum(roi_mask & (data > 0))
-    roi_volume = roi_voxel_count * voxel_size
+    Args:
+        roi_label: Integer label from Harvard-Oxford atlas
 
-    # Get region name based on whether it's cortical or subcortical
+    Returns:
+        Region name string
+    """
     if roi_label in ho_cortical:
-        region_name = ho_cortical[roi_label]
+        return ho_cortical[roi_label]
     elif roi_label in ho_subcortical:
-        region_name = ho_subcortical[roi_label]
+        return ho_subcortical[roi_label]
     else:
-        region_name = f"Unknown Region {roi_label}"
-
-    roi_volumes[roi_label] = roi_volume
-    roi_names[roi_label] = region_name
-
-# Print results with region names
-for label, volume in roi_volumes.items():
-    print(f"{roi_names[label]}: {volume:.2f} mm³")
+        return f"Unknown Region {roi_label}"

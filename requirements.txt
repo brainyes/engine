@@ -16,3 +16,4 @@ aws-lambda-powertools
 requests
 sentry-sdk
 dcm2niix
+openpyxl

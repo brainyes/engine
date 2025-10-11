@@ -26,3 +26,10 @@ os.makedirs(output_dir, exist_ok=True)
 
 atlas_file_path = os.path.join(dataset_dir, 'HarvardOxford-cort-maxprob-thr25-2mm.nii.gz')
 oasis_bids_tsv_path = os.path.join(dataset_dir, 'tsv_files', 'lab_1', 'OASIS_BIDS.tsv')
+
+# Population norms dataset directories
+datasets_base_dir = os.path.join(dataset_dir, 'datasets')
+oasis_1_dir = os.path.join(datasets_base_dir, 'oasis-1')
+oasis_3_dir = os.path.join(datasets_base_dir, 'oasis-3')
+hcp_dir = os.path.join(datasets_base_dir, 'hcp-young-adult')
+openneuro_dir = os.path.join(datasets_base_dir, 'openneuro')

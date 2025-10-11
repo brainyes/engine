@@ -1,13 +1,11 @@
-import gzip
 import inngest
-import time
 import os
-import threading
 import argparse
 
 from functions.calculate_roi_volumes import fn as calculate_roi_volumes
 from functions.resample_atlas_for_user_nifti import fn as resample_atlas_for_user_nifti
 from utilities.data import supabase
+from utilities.supabase_utilities import upload_nifti_to_storage
 from utilities.inngest import client as inngest_client
 
 # todo owner_id needs refactor. it's actually sth like users.slug or users.nickname.
@@ -16,12 +14,27 @@ from utilities.inngest import client as inngest_client
 # public_id is for anonymous entries/users/persons.
 #   we still represent them in our supabase user/owner system.
 def upload_nifti(nifti_gz, user_id = None, public_id = None):
+    """
+    Upload a NIFTI file from a file path.
+
+    This function handles user creation/auth and delegates the actual upload
+    to the upload_nifti_to_storage utility function.
+
+    Args:
+        nifti_gz: Path to NIFTI file (.nii or .nii.gz)
+        user_id: User ID (not yet supported)
+        public_id: Public ID for anonymous user creation
+
+    Returns:
+        tuple: (nifti_file, nifti_file_zipped) database records
+    """
     if user_id is None and public_id is None:
         raise Exception('Must specify either user_id or public_id')
 
     if user_id is not None:
         raise Exception('Non-sample users are not supported yet')
 
+    # Create or get anonymous user
     if user_id is not None:
         user_response = supabase.auth.admin.get_user_by_id(user_id)
         user = user_response.user
@@ -33,27 +46,11 @@ def upload_nifti(nifti_gz, user_id = None, public_id = None):
         )
         user = new_anonymous_user_auth.user
 
-    storage_file_name = user.id + "/" + str(time.time());
+    # Read file and upload using utility function
     with open(nifti_gz, 'rb') as f:
-        file_content = f.read()
-        unzipped_content = gzip.decompress(file_content)
+        file_data = f.read()
 
-    upload_res = supabase.storage.from_("nifti_gz_files").upload(
-        file=unzipped_content, path=storage_file_name + ".nii",
-        file_options={"content-type": "application/octet-stream; charset=binary", "upsert": "true"}, )
-    upload_obj = upload_res.json()
-    nifti_file = supabase.schema("public").table("nifti_files").upsert(
-        {"id": upload_obj['Id'], "user_id": user.id,
-         "file_type": "nii"}).execute().data[0]
-
-    upload_res = supabase.storage.from_("nifti_gz_files").upload(
-        file=file_content, path=storage_file_name + ".nii.gz",
-        file_options={"content-type": "application/gzip", "upsert": "true"},)
-    upload_obj = upload_res.json()
-    nifti_file_zipped = supabase.schema("public").table("nifti_files").upsert(
-        {"id": upload_obj['Id'], "parent_nifti_file_id": nifti_file['id'], "user_id": user.id, "file_type": "nii.gz"}).execute().data
-
-    return nifti_file, nifti_file_zipped
+    return upload_nifti_to_storage(file_data, user.id)
 
 
 @inngest_client.create_function(

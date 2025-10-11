@@ -21,7 +21,16 @@ def resample_atlas_for_user_nifti(nifti_file_id):
     user_nifti = nib.load(nifti_gz_path)
     atlas_img = nib.load(atlas_file_path)
 
-    resampled_atlas = resample_img(atlas_img, target_affine=user_nifti.affine, target_shape=user_nifti.shape)
+    # Handle 4D images with trailing singleton dimension (defensive check)
+    # Some NIfTI files may have shape (x, y, z, 1) instead of (x, y, z)
+    target_shape = user_nifti.shape
+    if len(target_shape) == 4 and target_shape[3] == 1:
+        print(f"  ℹ️  Squeezing 4D image {target_shape} to 3D")
+        user_nifti_data = user_nifti.get_fdata().squeeze()
+        user_nifti = nib.Nifti1Image(user_nifti_data, user_nifti.affine, user_nifti.header)
+        target_shape = user_nifti.shape
+
+    resampled_atlas = resample_img(atlas_img, target_affine=user_nifti.affine, target_shape=target_shape)
     voxel_size = np.abs(np.linalg.det(resampled_atlas.affine[:3, :3]))
 
     if save_assets or not silent_run:
@@ -33,15 +42,19 @@ def resample_atlas_for_user_nifti(nifti_file_id):
             plt.show()
 
     # Upload resampled atlas to storage
-    storage_path = upload_resampled_atlas(nifti_file_id, resampled_atlas.to_bytes())
+    storage_path = upload_resampled_atlas(nifti_file['user_id'], nifti_file_id, resampled_atlas.to_bytes())
     print(f"✅ Uploaded resampled atlas to: {storage_path}")
 
-    # save voxel_size
-    user_meta = (supabase.schema("public")
-                 .rpc("set_user_meta", {"p_user_id": nifti_file['user_id'], "p_meta_key": "voxel_size", "p_meta_value": voxel_size})
-                 .single().execute()).data
-
-    print("Saved voxel size: ", user_meta)
+    # save voxel_size (optional - may fail for anonymous/population users)
+    user_meta = None
+    try:
+        user_meta = (supabase.schema("public")
+                     .rpc("set_user_meta", {"p_user_id": nifti_file['user_id'], "p_meta_key": "voxel_size", "p_meta_value": voxel_size})
+                     .single().execute()).data
+        print("Saved voxel size: ", user_meta)
+    except Exception as e:
+        print(f"⚠️  Warning: Could not save voxel_size to usermeta (likely anonymous user): {str(e)}")
+        print(f"   Voxel size: {voxel_size} (not persisted)")
 
     return {"storage_path": storage_path, "voxel_size": voxel_size, "user_meta": user_meta}
 

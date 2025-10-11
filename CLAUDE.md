@@ -57,6 +57,38 @@ The test suite uses pre-existing data:
 
 See `tests/README.md` for more details.
 
+### Population Norms System
+```bash
+# Download population dataset metadata
+python -m functions.download_oasis_dataset --dataset oasis-1 --count 100
+
+# Batch process population scans
+python -m functions.batch_process_population_dataset \
+    research/input/datasets/oasis-1/raw \
+    --dataset oasis-1 \
+    --metadata research/input/datasets/oasis-1/selected_subjects.csv
+
+# Compute population norms from processed scans
+python -m functions.compute_population_norms --dataset oasis-1 --min-samples 30
+
+# Compare individual scan to population norms
+python -m functions.compare_to_population_norms FILE_ID --age 45 --sex M
+```
+
+**Workflow Overview**:
+1. **Download**: Get dataset metadata and subject lists
+2. **Process**: Batch upload and analyze population scans
+3. **Compute**: Calculate statistical norms (mean, std, percentiles)
+4. **Compare**: Match individual scans to age/sex-stratified norms
+
+**Database Tables Required**:
+- `population_scans` - Metadata for population scans (age, sex, dataset source)
+- `normative_brain_data` - Computed norms (mean, std, percentiles by age/sex)
+- `population_comparisons` - Individual comparison results (z-scores, percentiles)
+
+See `docs/POPULATION_NORMS_GUIDE.md` for detailed instructions.
+See `docs/DATABASE_SCHEMA_POPULATION_NORMS.md` for database setup.
+
 ## Architecture Overview
 
 ### Core Components
@@ -366,4 +398,4 @@ Commented out stages:
 
 ---
 
-*Last Updated: 2025-09-28 - AWS Infrastructure Deployment Setup*
+*Last Updated: 2025-10-10 - Population Norms System Implementation*

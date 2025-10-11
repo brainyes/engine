@@ -1,4 +1,6 @@
 import base64
+import gzip
+import time
 
 from io import BytesIO
 
@@ -7,6 +9,80 @@ from utilities.utilities import save_to_temp_file, cast_value
 
 OUTPUT_TYPE_FILE = "file"
 OUTPUT_TYPE_PANDAS = "pandas"
+
+
+def upload_nifti_to_storage(file_data, user_id, file_suffix=""):
+    """
+    Upload NIFTI file data to storage with automatic compression handling.
+
+    Creates both .nii (uncompressed) and .nii.gz (compressed) versions in storage
+    and corresponding records in nifti_files table.
+
+    Args:
+        file_data: Raw file bytes (can be compressed or uncompressed)
+        user_id: User ID for storage path and database record
+        file_suffix: Optional suffix for filename (e.g., "_from_dicom")
+
+    Returns:
+        tuple: (nifti_file, nifti_file_zipped) - Database records for both versions
+
+    Example:
+        with open('scan.nii.gz', 'rb') as f:
+            data = f.read()
+        nifti_file, nifti_gz = upload_nifti_to_storage(data, user_id, "_from_dicom")
+    """
+    # Try to decompress first (handles .nii.gz or misnamed files)
+    try:
+        unzipped_content = gzip.decompress(file_data)
+        zipped_content = file_data
+    except (gzip.BadGzipFile, OSError):
+        # File is already uncompressed (.nii)
+        unzipped_content = file_data
+        zipped_content = gzip.compress(file_data)
+
+    # Generate storage paths
+    timestamp = int(time.time() * 1000)
+    storage_file_name = f"{user_id}/{timestamp}{file_suffix}"
+    nii_path = storage_file_name + ".nii"
+    nii_gz_path = storage_file_name + ".nii.gz"
+
+    # Upload uncompressed version
+    supabase.storage.from_("nifti_gz_files").upload(
+        file=unzipped_content,
+        path=nii_path,
+        file_options={"content-type": "application/octet-stream; charset=binary", "upsert": "true"}
+    )
+
+    # Query storage.objects to get the storage ID
+    storage_objects = supabase.schema('storage').table('objects').select('id').eq('bucket_id', 'nifti_gz_files').eq('name', nii_path).execute()
+    if not storage_objects.data or len(storage_objects.data) == 0:
+        raise Exception(f"Could not find storage object for path: {nii_path}")
+    storage_id = storage_objects.data[0]['id']
+
+    # Create nifti_files record
+    nifti_file = supabase.schema("public").table("nifti_files").upsert(
+        {"id": storage_id, "user_id": user_id, "file_type": "nii"}
+    ).execute().data[0]
+
+    # Upload compressed version
+    supabase.storage.from_("nifti_gz_files").upload(
+        file=zipped_content,
+        path=nii_gz_path,
+        file_options={"content-type": "application/gzip", "upsert": "true"}
+    )
+
+    # Query storage.objects to get the storage ID
+    storage_objects_gz = supabase.schema('storage').table('objects').select('id').eq('bucket_id', 'nifti_gz_files').eq('name', nii_gz_path).execute()
+    if not storage_objects_gz.data or len(storage_objects_gz.data) == 0:
+        raise Exception(f"Could not find storage object for path: {nii_gz_path}")
+    storage_id_gz = storage_objects_gz.data[0]['id']
+
+    # Create nifti_files record for compressed version
+    nifti_file_zipped = supabase.schema("public").table("nifti_files").upsert(
+        {"id": storage_id_gz, "parent_nifti_file_id": nifti_file['id'], "user_id": user_id, "file_type": "nii.gz"}
+    ).execute().data
+
+    return nifti_file, nifti_file_zipped
 
 def get_all_nifti_files():
     response = supabase.schema("public").table("nifti_files").select("*").execute()
@@ -56,19 +132,20 @@ def download_nifti_file(nifti_file = None, storage_object = None):
     nifti_gz_data = supabase.storage.from_("nifti_gz_files").download(storage_object['name'])
     return save_to_temp_file(nifti_gz_data, storage_object['name'])
 
-def upload_resampled_atlas(nifti_file_id, file_data):
+def upload_resampled_atlas(user_id, nifti_file_id, file_data):
     """
     Upload resampled atlas for a given nifti file.
-    Uses known storage path pattern: {nifti_file_id}/atlas-resampled.nii
+    Uses known storage path pattern: {user_id}/{nifti_file_id}/atlas-resampled.nii
 
     Args:
+        user_id: The user ID (for RLS compliance)
         nifti_file_id: The nifti file ID
         file_data: The file data (bytes) to upload
 
     Returns:
         The storage path where the file was uploaded
     """
-    storage_path = f"{nifti_file_id}/atlas-resampled.nii"
+    storage_path = f"{user_id}/{nifti_file_id}/atlas-resampled.nii"
     supabase.storage.from_("nifti_gz_files").upload(
         file=file_data,
         path=storage_path,
@@ -76,12 +153,12 @@ def upload_resampled_atlas(nifti_file_id, file_data):
     )
     return storage_path
 
-def download_resampled_atlas(nifti_file_id):
+def download_resampled_atlas(user_id, nifti_file_id):
     """
     Download resampled atlas for a given nifti file.
-    Uses known storage path pattern: {nifti_file_id}/atlas-resampled.nii
+    Uses known storage path pattern: {user_id}/{nifti_file_id}/atlas-resampled.nii
     """
-    storage_path = f"{nifti_file_id}/atlas-resampled.nii"
+    storage_path = f"{user_id}/{nifti_file_id}/atlas-resampled.nii"
     atlas_data = supabase.storage.from_("nifti_gz_files").download(storage_path)
     return save_to_temp_file(atlas_data, "atlas-resampled.nii")
 

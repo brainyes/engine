@@ -18,12 +18,15 @@ def calculate_roi_volumes(nifti_file_id):
     user_nifti = nib.load(user_nifti_gz_path)
 
     # Download resampled atlas from storage
-    atlas_sampled_nifti_gz_path = download_resampled_atlas(nifti_file_id)
+    atlas_sampled_nifti_gz_path = download_resampled_atlas(user_nifti_file['user_id'], nifti_file_id)
     atlas_sampled_nifti = nib.load(atlas_sampled_nifti_gz_path)
 
+    # Try to get voxel_size from usermeta, or compute from affine matrix
     voxel_size = get_user_meta(user_nifti_file['user_id'], 'voxel_size')
     if voxel_size is None:
-        raise Exception("User's voxel size was not determined.")
+        # Compute voxel size directly from NIFTI affine matrix
+        voxel_size = np.abs(np.linalg.det(user_nifti.affine[:3, :3]))
+        print(f"ℹ️  Voxel size not in usermeta, computed from affine: {voxel_size}")
 
     data = user_nifti.get_fdata()
     roi_volumes = {}

@@ -19,13 +19,13 @@ import argparse
 import subprocess
 import tempfile
 import shutil
-import gzip
 from pathlib import Path
 import pydicom
 import requests
 from datetime import datetime
 
 from utilities.data import supabase
+from utilities.supabase_utilities import upload_nifti_to_storage
 from utilities.options import LAMBDA_API_URL
 
 FUNCTION_NAME = "dicom_to_nifti_converter"
@@ -187,64 +187,20 @@ def dicom_to_nifti_converter(dicom_series_id, **kwargs):
         nifti_file_path = str(nifti_files[0])
         print(f"Generated NIfTI file: {nifti_file_path}")
 
-        # 4. Upload NIfTI file to Supabase storage
+        # 4. Upload NIfTI file to Supabase storage using utility
         print("Uploading NIfTI file to storage...")
 
         with open(nifti_file_path, 'rb') as f:
-            nifti_gz_data = f.read()
+            nifti_data = f.read()
 
-        # Decompress to get .nii version (we only store uncompressed)
-        nifti_data = gzip.decompress(nifti_gz_data)
-
-        timestamp = int(datetime.now().timestamp() * 1000)
-        storage_file_name = f"{user_id}/{timestamp}_from_dicom.nii"
-
-        # Upload .nii (uncompressed) version only
-        print(f"Uploading to path: {storage_file_name}")
-        upload_res = supabase.storage.from_('nifti_gz_files').upload(
-            file=nifti_data,
-            path=storage_file_name,
-            file_options={"content-type": "application/octet-stream; charset=binary", "upsert": "true"}
+        # Use utility function to handle upload (handles both .nii and .nii.gz)
+        nifti_file, nifti_file_zipped = upload_nifti_to_storage(
+            nifti_data,
+            user_id,
+            file_suffix="_from_dicom"
         )
-        print(f"Upload response: {upload_res}")
-
-        # Get the storage object to retrieve its ID
-        # Query storage.objects table to get the ID for this path
-        print(f"Querying storage.objects for bucket_id=nifti_gz_files, name={storage_file_name}")
-        storage_objects = supabase.schema('storage').table('objects').select('id').eq('bucket_id', 'nifti_gz_files').eq('name', storage_file_name).execute()
-        print(f"Storage objects query result: {storage_objects}")
-
-        if not storage_objects.data or len(storage_objects.data) == 0:
-            raise Exception(f"Could not find storage object for path: {storage_file_name}")
-
-        storage_id = storage_objects.data[0]['id']
-        print(f"Storage object ID: {storage_id}")
-
-        # Create nifti_files record using storage object ID
-        print(f"Creating nifti_files record with id={storage_id}, user_id={user_id}, file_type=nii")
-        try:
-            # Switch back to public schema (after querying storage.objects)
-            nifti_insert_response = supabase.schema('public').table('nifti_files').insert({
-                'id': storage_id,
-                'user_id': user_id,
-                'file_type': 'nii'
-            }).execute()
-
-            print(f"Insert response: {nifti_insert_response}")
-            if nifti_insert_response.data and len(nifti_insert_response.data) > 0:
-                nifti_file = nifti_insert_response.data[0]
-            else:
-                # If insert doesn't return data, query it back
-                nifti_file = supabase.schema('public').table('nifti_files').select('*').eq('id', storage_id).single().execute().data
-        except Exception as insert_error:
-            print(f"Insert error details: {insert_error}")
-            print(f"Insert error type: {type(insert_error)}")
-            print(f"Insert error args: {insert_error.args}")
-            import traceback
-            traceback.print_exc()
-            raise
-
         nifti_file_id = nifti_file['id']
+        print(f"✓ Uploaded NIFTI file: {nifti_file_id}")
 
         # 6. Update dicom_series table with nifti_file_id and mark as completed
         supabase.table('dicom_series') \
