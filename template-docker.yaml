@@ -337,7 +337,7 @@ Resources:
               SSEAlgorithm: AES256
       Tags:
         - Key: Purpose
-          Value: Population dataset storage (OASIS, HCP, etc.)
+          Value: Population dataset storage - OASIS HCP and others
         - Key: CostCenter
           Value: Research
 
