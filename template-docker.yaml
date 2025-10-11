@@ -186,6 +186,7 @@ Resources:
           SUBNET_1: !Ref PublicSubnet1
           SUBNET_2: !Ref PublicSubnet2
           SECURITY_GROUP: !Ref EcsSecurityGroup
+          POPULATION_DATASET_BUCKET: !Ref PopulationDatasetBucket
       Policies:
         - SQSSendMessagePolicy:
             QueueName: !GetAtt TaskQueue.QueueName
@@ -209,6 +210,15 @@ Resources:
               Resource:
                 - !GetAtt EcsExecutionRole.Arn
                 - !GetAtt EcsTaskRole.Arn
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:ListBucket
+                - s3:DeleteObject
+              Resource:
+                - !GetAtt PopulationDatasetBucket.Arn
+                - !Sub '${PopulationDatasetBucket.Arn}/*'
       Events:
         # Function execution endpoints
         PostFunction:
@@ -289,6 +299,48 @@ Resources:
       QueueName: brainyes-task-dlq
       MessageRetentionPeriod: 1209600  # 14 days
 
+  # S3 Bucket for Population Dataset Storage (OASIS, HCP, etc.)
+  PopulationDatasetBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-population-datasets'
+      # Intelligent-Tiering: automatically moves data to cheaper storage after 30/90 days
+      IntelligentTieringConfigurations:
+        - Id: EntireBucket
+          Status: Enabled
+          Tierings:
+            - AccessTier: ARCHIVE_ACCESS
+              Days: 7
+            - AccessTier: DEEP_ARCHIVE_ACCESS
+              Days: 90
+      # Lifecycle policy to optimize costs
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIntelligentTiering
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 0
+                StorageClass: INTELLIGENT_TIERING
+      # Versioning for safety (can recover accidentally deleted datasets)
+      VersioningConfiguration:
+        Status: Enabled
+      # Block public access (private bucket)
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # Server-side encryption
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Purpose
+          Value: Population dataset storage (OASIS, HCP, etc.)
+        - Key: CostCenter
+          Value: Research
+
   # ECS Resources (same as before)
   EcsCluster:
     Type: AWS::ECS::Cluster
@@ -329,6 +381,8 @@ Resources:
               Value: !Ref AWS::Region
             - Name: LAMBDA_API_URL
               Value: !Sub 'https://${BrainYesApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+            - Name: POPULATION_DATASET_BUCKET
+              Value: !Ref PopulationDatasetBucket
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -389,6 +443,19 @@ Resources:
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
                 Resource: !GetAtt TaskQueue.Arn
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                  - s3:DeleteObject
+                Resource:
+                  - !GetAtt PopulationDatasetBucket.Arn
+                  - !Sub '${PopulationDatasetBucket.Arn}/*'
 
 
 Outputs:

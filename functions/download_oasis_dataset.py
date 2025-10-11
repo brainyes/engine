@@ -23,9 +23,19 @@ import argparse
 import requests
 import pandas as pd
 import tarfile
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from utilities.options import dataset_dir
+
+# Try to import boto3 for S3 support (optional)
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+    S3_AVAILABLE = True
+except ImportError:
+    S3_AVAILABLE = False
+    print("⚠️  Warning: boto3 not installed. S3 caching will be disabled.")
+    print("   Install with: pip install boto3")
 
 FUNCTION_NAME = "download_oasis_dataset"
 
@@ -174,9 +184,159 @@ def parse_oasis_1_manifest(manifest_path: str, max_subjects: int = None) -> pd.D
     return df
 
 
+# ============================================================================
+# S3 Caching Support
+# ============================================================================
+
+def get_s3_bucket_name() -> Optional[str]:
+    """
+    Get S3 bucket name from environment variable
+
+    Returns:
+        Bucket name or None if not configured
+    """
+    return os.environ.get('POPULATION_DATASET_BUCKET')
+
+
+def check_s3_disc_exists(bucket_name: str, disc_num: int) -> bool:
+    """
+    Check if a disc archive exists in S3
+
+    Args:
+        bucket_name: S3 bucket name
+        disc_num: Disc number (1-12)
+
+    Returns:
+        True if exists, False otherwise
+    """
+    if not S3_AVAILABLE:
+        return False
+
+    try:
+        s3_client = boto3.client('s3')
+        s3_key = f"oasis-1/raw/oasis_cross-sectional_disc{disc_num}.tar.gz"
+
+        s3_client.head_object(Bucket=bucket_name, Key=s3_key)
+        return True
+    except ClientError:
+        return False
+    except Exception as e:
+        print(f"  ⚠️  S3 check error: {str(e)}")
+        return False
+
+
+def download_disc_from_s3(bucket_name: str, disc_num: int, destination: str) -> bool:
+    """
+    Download a disc archive from S3
+
+    Args:
+        bucket_name: S3 bucket name
+        disc_num: Disc number (1-12)
+        destination: Local file path to save
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if not S3_AVAILABLE:
+        return False
+
+    try:
+        s3_client = boto3.client('s3')
+        s3_key = f"oasis-1/raw/oasis_cross-sectional_disc{disc_num}.tar.gz"
+
+        # Get file size for progress tracking
+        response = s3_client.head_object(Bucket=bucket_name, Key=s3_key)
+        total_size = response['ContentLength']
+
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+
+        # Download with progress
+        downloaded = 0
+        with open(destination, 'wb') as f:
+            def progress_callback(bytes_amount):
+                nonlocal downloaded
+                downloaded += bytes_amount
+                progress = (downloaded / total_size) * 100
+                print(f'\r  S3 Progress: {progress:.1f}%', end='', flush=True)
+
+            s3_client.download_fileobj(
+                bucket_name,
+                s3_key,
+                f,
+                Callback=progress_callback
+            )
+
+        print()  # New line after progress
+        return True
+
+    except ClientError as e:
+        print(f"  ❌ S3 download failed: {str(e)}")
+        return False
+    except Exception as e:
+        print(f"  ❌ S3 download error: {str(e)}")
+        return False
+
+
+def upload_disc_to_s3(bucket_name: str, disc_num: int, source_file: str) -> bool:
+    """
+    Upload a disc archive to S3 after downloading from OASIS
+
+    Args:
+        bucket_name: S3 bucket name
+        disc_num: Disc number (1-12)
+        source_file: Local file path to upload
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if not S3_AVAILABLE:
+        return False
+
+    try:
+        s3_client = boto3.client('s3')
+        s3_key = f"oasis-1/raw/oasis_cross-sectional_disc{disc_num}.tar.gz"
+
+        # Get file size for progress tracking
+        file_size = os.path.getsize(source_file)
+
+        print(f"  ☁️  Uploading disc {disc_num} to S3 for future use...")
+
+        # Upload with progress
+        uploaded = 0
+        def progress_callback(bytes_amount):
+            nonlocal uploaded
+            uploaded += bytes_amount
+            progress = (uploaded / file_size) * 100
+            print(f'\r  Upload Progress: {progress:.1f}%', end='', flush=True)
+
+        s3_client.upload_file(
+            source_file,
+            bucket_name,
+            s3_key,
+            Callback=progress_callback
+        )
+
+        print()  # New line after progress
+        print(f"  ✓ Uploaded to S3: s3://{bucket_name}/{s3_key}")
+        return True
+
+    except ClientError as e:
+        print(f"  ⚠️  S3 upload failed: {str(e)}")
+        return False
+    except Exception as e:
+        print(f"  ⚠️  S3 upload error: {str(e)}")
+        return False
+
+
 def download_and_extract_oasis_disc(disc_num: int, output_dir: str, skip_existing: bool = True) -> bool:
     """
     Download and extract a single OASIS disc archive
+
+    Uses S3 caching for faster downloads when available:
+    1. Check if already extracted locally
+    2. Try downloading from S3 (fast)
+    3. If not in S3, download from OASIS source (slow)
+    4. Upload to S3 after downloading from source
 
     Args:
         disc_num: Disc number (1-12)
@@ -186,26 +346,51 @@ def download_and_extract_oasis_disc(disc_num: int, output_dir: str, skip_existin
     Returns:
         True if successful, False otherwise
     """
-    # OASIS-1 disc URLs
-    disc_url = f"https://download.nrg.wustl.edu/data/oasis_cross-sectional_disc{disc_num}.tar.gz"
     tar_path = os.path.join(output_dir, f"oasis_cross-sectional_disc{disc_num}.tar.gz")
     extract_dir = os.path.join(output_dir, "raw")
+    marker_file = os.path.join(output_dir, f".disc{disc_num}_extracted")
 
     # Check if already extracted
-    if skip_existing and os.path.exists(extract_dir):
-        # Check if this disc has already been extracted (look for marker file)
-        marker_file = os.path.join(output_dir, f".disc{disc_num}_extracted")
-        if os.path.exists(marker_file):
-            print(f"  ⏭️  Disc {disc_num} already extracted, skipping...")
-            return True
+    if skip_existing and os.path.exists(marker_file):
+        print(f"  ⏭️  Disc {disc_num} already extracted, skipping...")
+        return True
 
-    # Download tar.gz file
+    # Get S3 bucket name (if configured)
+    s3_bucket = get_s3_bucket_name()
+    downloaded_from_s3 = False
+    downloaded_from_source = False
+
     print(f"\n📥 Downloading disc {disc_num}/12 (~1.5 GB)...")
-    print(f"  URL: {disc_url}")
 
-    if not download_file(disc_url, tar_path, show_progress=True):
-        print(f"  ❌ Failed to download disc {disc_num}")
-        return False
+    # Try S3 first (faster)
+    if s3_bucket and S3_AVAILABLE:
+        print(f"  ☁️  Checking S3 bucket: {s3_bucket}")
+        if check_s3_disc_exists(s3_bucket, disc_num):
+            print(f"  ✓ Found in S3! Downloading from S3 (faster)...")
+            if download_disc_from_s3(s3_bucket, disc_num, tar_path):
+                downloaded_from_s3 = True
+                print(f"  ✓ Downloaded from S3")
+            else:
+                print(f"  ⚠️  S3 download failed, falling back to source")
+        else:
+            print(f"  ℹ️  Not found in S3, downloading from source")
+
+    # Fallback to OASIS source if S3 failed or unavailable
+    if not downloaded_from_s3:
+        disc_url = f"https://download.nrg.wustl.edu/data/oasis_cross-sectional_disc{disc_num}.tar.gz"
+        print(f"  🌐 Downloading from OASIS source...")
+        print(f"  URL: {disc_url}")
+
+        if not download_file(disc_url, tar_path, show_progress=True):
+            print(f"  ❌ Failed to download disc {disc_num}")
+            return False
+
+        downloaded_from_source = True
+        print(f"  ✓ Downloaded from source")
+
+        # Upload to S3 for future use (if configured)
+        if s3_bucket and S3_AVAILABLE:
+            upload_disc_to_s3(s3_bucket, disc_num, tar_path)
 
     # Extract tar.gz
     print(f"  📦 Extracting disc {disc_num}...")
@@ -214,10 +399,9 @@ def download_and_extract_oasis_disc(disc_num: int, output_dir: str, skip_existin
             tar.extractall(path=extract_dir)
 
         # Create marker file to indicate this disc has been extracted
-        marker_file = os.path.join(output_dir, f".disc{disc_num}_extracted")
         open(marker_file, 'w').close()
 
-        # Optionally remove tar.gz to save space
+        # Remove tar.gz to save space
         os.remove(tar_path)
         print(f"  ✅ Disc {disc_num} extracted successfully")
         return True
