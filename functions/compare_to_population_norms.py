@@ -23,8 +23,9 @@ from typing import Dict, List, Optional
 from scipy import stats
 
 from utilities.data import supabase
-from utilities.supabase_utilities import get_roi_volumes
+from utilities.supabase_utilities import get_roi_volumes, get_user_profile
 from utilities.volume_labels import volume_labels_dict
+from utilities.population_utilities import GLOBAL_MEASURE_ROI_LABELS, GLOBAL_MEASURE_DISPLAY_NAMES
 
 FUNCTION_NAME = "compare_to_population_norms"
 
@@ -119,26 +120,83 @@ def is_outlier(z_score: float, threshold: float = 2.0) -> bool:
     return abs(z_score) > threshold
 
 
+def get_global_measures(nifti_file_id: str, measures_to_get: List[str] = None) -> Dict[str, float]:
+    """
+    Get user's global brain measures from FreeSurfer
+
+    Args:
+        nifti_file_id: ID of NIFTI file
+        measures_to_get: List of measure names to retrieve (None = all)
+
+    Returns:
+        Dictionary mapping measure_name to value
+    """
+    if measures_to_get is None:
+        measures_to_get = list(GLOBAL_MEASURE_ROI_LABELS.keys())
+
+    response = supabase.table('freesurfer_global_measures')\
+        .select('*')\
+        .eq('nifti_file_id', nifti_file_id)\
+        .in_('measure_name', measures_to_get)\
+        .execute()
+
+    if not response.data:
+        return {}
+
+    return {item['measure_name']: item['value'] for item in response.data}
+
+
 def compare_to_population_norms(
     nifti_file_id: str,
     age: Optional[int] = None,
-    sex: str = 'U',
+    sex: Optional[str] = None,
     outlier_threshold: float = 2.0,
-    save_to_db: bool = True
+    save_to_db: bool = True,
+    include_global_measures: bool = True
 ) -> Dict:
     """
-    Compare individual scan ROI volumes to population norms
+    Compare individual scan ROI volumes and global measures to population norms
 
     Args:
         nifti_file_id: ID of NIFTI file to compare
-        age: Age in years (if None, will try to get from metadata)
-        sex: 'M', 'F', or 'U' (unknown/combined)
+        age: Age in years (if None, will fetch from user profile)
+        sex: 'M', 'F', or 'U' (if None, will fetch from user profile)
         outlier_threshold: Z-score threshold for outliers (default: 2.0)
         save_to_db: Save comparison results to database
+        include_global_measures: Also compare global brain measures (default: True)
 
     Returns:
         Dictionary with comparison results and statistics
     """
+
+    # Get user profile if age/sex not explicitly provided
+    user_profile = None
+    if age is None or sex is None:
+        print("👤 Fetching user profile...")
+        user_profile = get_user_profile(nifti_file_id)
+
+        if user_profile:
+            # Use profile values if not explicitly provided
+            if age is None:
+                age = user_profile.get('age')
+                age_source = user_profile.get('age_source', 'profile')
+                if age:
+                    print(f"  ✓ Age from user profile: {age} ({age_source})")
+
+            if sex is None:
+                sex = user_profile.get('sex', 'U')
+                if sex and sex != 'U':
+                    print(f"  ✓ Sex from user profile: {sex}")
+
+            health_status = user_profile.get('health_status')
+            if health_status:
+                print(f"  ℹ️  Health status: {health_status}")
+        else:
+            print("  ⚠️  Could not fetch user profile")
+
+    # Set defaults if still None
+    if sex is None:
+        sex = 'U'
 
     print(f"\n{'='*70}")
     print(f"COMPARE TO POPULATION NORMS")
@@ -161,9 +219,8 @@ def compare_to_population_norms(
 
     print(f"  ✓ Found {len(user_volumes)} ROI volumes")
 
-    # Get age from metadata if not provided
+    # Final fallback: try population_scans table (for population dataset scans)
     if age is None:
-        # Try to get from population_scans table
         pop_scan = supabase.table('population_scans')\
             .select('age, sex')\
             .eq('nifti_file_id', nifti_file_id)\
@@ -173,10 +230,11 @@ def compare_to_population_norms(
         if pop_scan.data:
             age = pop_scan.data.get('age')
             sex = pop_scan.data.get('sex', sex)
-            print(f"  ℹ️  Retrieved metadata: age={age}, sex={sex}")
+            print(f"  ℹ️  Retrieved from population_scans: age={age}, sex={sex}")
 
     if age is None:
-        print("  ⚠️  Warning: Age not provided. Using age-agnostic norms may be less accurate.")
+        print("  ⚠️  Warning: Age not provided in user profile. Using age-agnostic norms may be less accurate.")
+        print("  💡 Tip: Update your profile at /dashboard/settings to enable age-matched comparisons")
         age = 50  # Default fallback
 
     # Compare each ROI to norms
@@ -235,6 +293,73 @@ def compare_to_population_norms(
 
     if norms_missing > 0:
         print(f"  ⚠️  {norms_missing} ROIs skipped (no matching norms)")
+
+    # Compare global measures if requested
+    global_measures_found = 0
+    global_measures_missing = 0
+
+    if include_global_measures:
+        print(f"\n🔍 Comparing global brain measures to population norms...")
+
+        # Get user's global measures
+        user_global_measures = get_global_measures(nifti_file_id)
+
+        if user_global_measures:
+            print(f"  ✓ Found {len(user_global_measures)} global measures")
+
+            for measure_name, user_value in user_global_measures.items():
+                # Get ROI label for this measure
+                roi_label = GLOBAL_MEASURE_ROI_LABELS.get(measure_name)
+                if roi_label is None:
+                    continue
+
+                display_name = GLOBAL_MEASURE_DISPLAY_NAMES.get(measure_name, measure_name)
+
+                # Get normative data for this global measure
+                norm_data = get_normative_data(roi_label, age, sex)
+
+                if norm_data is None:
+                    global_measures_missing += 1
+                    continue
+
+                global_measures_found += 1
+
+                # Calculate comparison statistics
+                z = calculate_z_score(user_value, norm_data['mean'], norm_data['std'])
+                percentile = calculate_percentile_from_z(z)
+                is_outlier_flag = is_outlier(z, outlier_threshold)
+
+                comparison = {
+                    'nifti_file_id': nifti_file_id,
+                    'roi_label': roi_label,
+                    'roi_name': display_name,
+                    'user_volume': float(user_value),
+                    'norm_mean': float(norm_data['mean']),
+                    'norm_std': float(norm_data['std']),
+                    'norm_p10': float(norm_data.get('p10', 0)),
+                    'norm_p25': float(norm_data.get('p25', 0)),
+                    'norm_p50': float(norm_data.get('p50', 0)),
+                    'norm_p75': float(norm_data.get('p75', 0)),
+                    'norm_p90': float(norm_data.get('p90', 0)),
+                    'z_score': float(z),
+                    'percentile': int(percentile),
+                    'is_outlier': is_outlier_flag,
+                    'age_bin': f"{norm_data['age_min']}-{norm_data['age_max']}",
+                    'sex_used': norm_data['sex'],
+                    'sample_size': norm_data.get('sample_size', 0)
+                }
+
+                comparisons.append(comparison)
+
+                if is_outlier_flag:
+                    outliers.append(comparison)
+
+            print(f"  ✓ Compared {global_measures_found} global measures")
+
+            if global_measures_missing > 0:
+                print(f"  ⚠️  {global_measures_missing} global measures skipped (no matching norms)")
+        else:
+            print(f"  ℹ️  No global measures found for this scan (FreeSurfer may not have been run)")
 
     # Save to database if requested
     if save_to_db and len(comparisons) > 0:
@@ -295,7 +420,7 @@ def compare_to_population_norms(
 
     print(f"\n{'='*70}\n")
 
-    return {
+    result = {
         'nifti_file_id': nifti_file_id,
         'age': age,
         'sex': sex,
@@ -312,6 +437,13 @@ def compare_to_population_norms(
         }
     }
 
+    # Add global measures info if they were included
+    if include_global_measures:
+        result['global_measures_compared'] = global_measures_found
+        result['global_measures_missing'] = global_measures_missing
+
+    return result
+
 
 # Command line interface
 if __name__ == "__main__":
@@ -320,22 +452,28 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Compare scan for 45-year-old male
-  python -m functions.compare_to_population_norms FILE_ID --age 45 --sex M
-
-  # Compare without age/sex (uses combined norms)
+  # Compare scan (age/sex fetched from user profile automatically)
   python -m functions.compare_to_population_norms FILE_ID
 
+  # Override age/sex from command line
+  python -m functions.compare_to_population_norms FILE_ID --age 45 --sex M
+
   # Use stricter outlier threshold (3 SD)
-  python -m functions.compare_to_population_norms FILE_ID --age 60 --sex F --threshold 3.0
+  python -m functions.compare_to_population_norms FILE_ID --threshold 3.0
 
   # Don't save to database (just display results)
-  python -m functions.compare_to_population_norms FILE_ID --age 50 --no-save
+  python -m functions.compare_to_population_norms FILE_ID --no-save
 
 Requirements:
   - Population norms must be computed first (compute_population_norms)
   - User's scan must have ROI volumes calculated
   - normative_brain_data table must have age-stratified norms
+
+User Profile:
+  - Age, sex, and health status are automatically fetched from user profile
+  - If not in profile, uses --age and --sex CLI arguments
+  - If neither provided, uses age-agnostic combined norms
+  - Update profile at /dashboard/settings for best accuracy
 
 Interpretation:
   - Z-score: How many standard deviations from mean
@@ -360,15 +498,15 @@ Interpretation:
         '--age',
         type=int,
         default=None,
-        help='Age in years (for age-matched comparison)'
+        help='Age in years (optional - fetched from user profile if not provided)'
     )
 
     parser.add_argument(
         '--sex',
         type=str,
-        default='U',
+        default=None,
         choices=['M', 'F', 'U'],
-        help='Sex: M (male), F (female), U (unknown/combined)'
+        help='Sex: M (male), F (female), U (unknown) - fetched from user profile if not provided'
     )
 
     parser.add_argument(
@@ -384,6 +522,12 @@ Interpretation:
         help='Do not save results to database'
     )
 
+    parser.add_argument(
+        '--no-global-measures',
+        action='store_true',
+        help='Skip comparison of global brain measures (default: include them)'
+    )
+
     args = parser.parse_args()
 
     try:
@@ -392,7 +536,8 @@ Interpretation:
             age=args.age,
             sex=args.sex,
             outlier_threshold=args.threshold,
-            save_to_db=not args.no_save
+            save_to_db=not args.no_save,
+            include_global_measures=not args.no_global_measures
         )
 
         if result['total_rois'] == 0:

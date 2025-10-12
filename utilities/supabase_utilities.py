@@ -243,3 +243,73 @@ def save_insight_outputs(user_insight_id, outputs):
                 .upsert(upserts, on_conflict="user_insight_id, name").execute())
     print('Saved insight output(s):', outputs.keys())
     return response.data
+
+
+def get_user_profile(nifti_file_id):
+    """
+    Get user profile (age, sex, date_of_birth, health_status) from the nifti_file's owner
+
+    This utility function retrieves health and demographic information from the user profile
+    which can be used for analytics, population comparisons, and personalized insights.
+
+    Args:
+        nifti_file_id: ID of NIFTI file (used to lookup the owner)
+
+    Returns:
+        Dictionary with user profile data including:
+        - age: Age in years (int or None)
+        - sex: 'M', 'F', or 'U' (unknown)
+        - date_of_birth: ISO date string or None
+        - health_status: Health status string (e.g., 'healthy', 'cognitive_impairment')
+        - age_source: 'profile' or 'calculated_from_dob' (if age was calculated)
+
+        Returns None if user or nifti file not found.
+
+    Example:
+        profile = get_user_profile(nifti_file_id)
+        if profile and profile.get('age'):
+            print(f"User age: {profile['age']}, sex: {profile['sex']}")
+    """
+    from datetime import datetime
+    from typing import Optional
+
+    # Get user_id from nifti_file
+    nifti_response = supabase.table('nifti_files')\
+        .select('user_id')\
+        .eq('id', nifti_file_id)\
+        .maybe_single()\
+        .execute()
+
+    if not nifti_response.data:
+        return None
+
+    user_id = nifti_response.data.get('user_id')
+    if not user_id:
+        return None
+
+    # Get user profile
+    user_response = supabase.table('users')\
+        .select('age, sex, date_of_birth, health_status')\
+        .eq('id', user_id)\
+        .maybe_single()\
+        .execute()
+
+    if not user_response.data:
+        return None
+
+    profile = user_response.data
+
+    # Calculate age from date_of_birth if available and age not set
+    if profile.get('date_of_birth') and not profile.get('age'):
+        try:
+            dob = datetime.fromisoformat(profile['date_of_birth'].replace('Z', '+00:00'))
+            today = datetime.now()
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+            profile['age'] = age
+            profile['age_source'] = 'calculated_from_dob'
+        except Exception as e:
+            print(f"  ⚠️  Could not calculate age from date_of_birth: {e}")
+    elif profile.get('age'):
+        profile['age_source'] = 'profile'
+
+    return profile

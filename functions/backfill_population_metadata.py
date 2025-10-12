@@ -246,6 +246,7 @@ def backfill_population_metadata(
 
 
 # Command line interface
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description='Backfill metadata for population scans',

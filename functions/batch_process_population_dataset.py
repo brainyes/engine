@@ -24,6 +24,8 @@ import traceback
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
 
 from functions.upload_nifti import upload_nifti
 from functions.resample_atlas_for_user_nifti import resample_atlas_for_user_nifti
@@ -140,6 +142,103 @@ def load_metadata_from_csv(metadata_path: str) -> pd.DataFrame:
     return df
 
 
+def check_if_scan_exists(dataset_source: str, subject_id: str) -> bool:
+    """
+    Check if a scan already exists in the population_scans table
+
+    Args:
+        dataset_source: Source dataset (e.g., 'oasis-1')
+        subject_id: Original subject ID from dataset
+
+    Returns:
+        True if scan exists, False otherwise
+    """
+    try:
+        response = supabase.table('population_scans')\
+            .select('id')\
+            .eq('subject_id', subject_id)\
+            .eq('dataset_source', dataset_source)\
+            .execute()
+
+        return response.data and len(response.data) > 0
+    except Exception as e:
+        # If check fails, assume doesn't exist to be safe
+        return False
+
+
+def process_single_scan(
+    filepath: str,
+    dataset_name: str,
+    metadata_dict: Optional[Dict] = None,
+    skip_existing: bool = True
+) -> Dict:
+    """
+    Process a single scan (used for parallel processing)
+
+    Args:
+        filepath: Path to NIFTI file
+        dataset_name: Dataset source name
+        metadata_dict: Dictionary with metadata for this subject
+        skip_existing: Skip if already processed
+
+    Returns:
+        Dictionary with processing result
+    """
+    subject_id = extract_subject_id_from_filename(filepath)
+
+    result = {
+        'subject_id': subject_id,
+        'filepath': filepath,
+        'status': 'unknown',
+        'nifti_file_id': None,
+        'error': None
+    }
+
+    try:
+        # Check if already processed
+        if skip_existing and check_if_scan_exists(dataset_name, subject_id):
+            result['status'] = 'skipped'
+            return result
+
+        # Upload NIFTI file
+        nifti_file, nifti_file_zipped = upload_nifti(
+            filepath,
+            user_id=None,
+            public_id=f"population-{dataset_name}-{subject_id}"
+        )
+        nifti_file_id = nifti_file['id']
+        result['nifti_file_id'] = nifti_file_id
+
+        # Resample atlas
+        atlas_result = resample_atlas_for_user_nifti(nifti_file_id)
+
+        # Calculate ROI volumes
+        roi_volumes = calculate_roi_volumes(nifti_file_id)
+
+        # Get metadata
+        age = metadata_dict.get('age') if metadata_dict else None
+        sex = metadata_dict.get('sex', 'U') if metadata_dict else 'U'
+        diagnosis = metadata_dict.get('diagnosis') if metadata_dict else None
+
+        # Save population metadata
+        pop_record = save_population_scan_metadata(
+            nifti_file_id=nifti_file_id,
+            dataset_source=dataset_name,
+            subject_id=subject_id,
+            age=age,
+            sex=sex,
+            diagnosis=diagnosis
+        )
+
+        result['status'] = 'success'
+        return result
+
+    except Exception as e:
+        result['status'] = 'failed'
+        result['error'] = str(e)
+        return result
+
+
 def save_population_scan_metadata(
     nifti_file_id: str,
     dataset_source: str,
@@ -179,16 +278,39 @@ def save_population_scan_metadata(
     }
 
     # Upsert to population_scans table
-    # Note: This table needs to be created in Supabase first
+    # Use subject_id + dataset_source as unique key to prevent duplicates
     try:
-        response = supabase.table('population_scans').upsert(
-            record,
-            on_conflict='nifti_file_id'
-        ).execute()
-        return response.data[0] if response.data else None
+        # Try insert first - will fail if duplicate exists due to unique constraint
+        try:
+            response = supabase.table('population_scans')\
+                .insert(record)\
+                .execute()
+
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            else:
+                # Insert succeeded but no data returned (shouldn't happen but handle it)
+                return record
+        except Exception as insert_error:
+            # If insert fails (likely due to duplicate), try update
+            error_msg = str(insert_error).lower()
+            if 'duplicate' in error_msg or 'unique' in error_msg or 'conflict' in error_msg:
+                # Update existing record
+                response = supabase.table('population_scans')\
+                    .update(record)\
+                    .eq('subject_id', subject_id)\
+                    .eq('dataset_source', dataset_source)\
+                    .execute()
+
+                # Update returns 204 No Content on success, which is actually SUCCESS
+                # Just return the record we tried to save
+                return record
+            else:
+                # Some other error, re-raise it
+                raise insert_error
+
     except Exception as e:
         print(f"  ⚠️  Warning: Could not save population metadata: {str(e)}")
-        print(f"     Make sure 'population_scans' table exists in Supabase.")
         return None
 
 
@@ -198,7 +320,9 @@ def batch_process_population_dataset(
     metadata_csv: Optional[str] = None,
     max_scans: Optional[int] = None,
     skip_existing: bool = True,
-    dry_run: bool = False
+    dry_run: bool = False,
+    offset: int = 0,
+    workers: int = 1
 ) -> Dict:
     """
     Batch process a population dataset
@@ -210,6 +334,8 @@ def batch_process_population_dataset(
         max_scans: Maximum scans to process (None = all)
         skip_existing: Skip scans already in database
         dry_run: If True, only scan and report, don't process
+        offset: Number of scans to skip from the beginning (default: 0)
+        workers: Number of parallel workers (default: 1 = sequential)
 
     Returns:
         Dictionary with processing statistics
@@ -221,6 +347,10 @@ def batch_process_population_dataset(
     print(f"Dataset: {dataset_name}")
     print(f"Directory: {dataset_dir}")
     print(f"Dry run: {dry_run}")
+    print(f"Skip existing: {skip_existing}")
+    if offset > 0:
+        print(f"Offset: {offset} (skipping first {offset} scans)")
+    print(f"Workers: {workers} ({'parallel' if workers > 1 else 'sequential'})")
     print(f"{'='*70}\n")
 
     # Find all NIFTI files
@@ -238,6 +368,11 @@ def batch_process_population_dataset(
         print(f"\n📋 Loading metadata from {metadata_csv}...")
         metadata_df = load_metadata_from_csv(metadata_csv)
         print(f"  ✓ Loaded metadata for {len(metadata_df)} subjects")
+
+    # Apply offset to skip already processed scans
+    if offset > 0:
+        nifti_files = nifti_files[offset:]
+        print(f"\n  → Skipping first {offset} scans (offset applied)")
 
     # Limit number of scans
     if max_scans:
@@ -270,6 +405,36 @@ def batch_process_population_dataset(
         print(f"\nTo process, run without --dry-run flag")
         return stats
 
+    # Prepare metadata lookup dictionary for faster access
+    metadata_lookup = {}
+    if metadata_df is not None:
+        for _, row in metadata_df.iterrows():
+            subj_id = row.get('subject_id')
+            if subj_id:
+                # Clean metadata
+                age_raw = row.get('age')
+                age = None
+                if pd.notna(age_raw):
+                    try:
+                        age = int(float(age_raw))
+                    except (ValueError, TypeError):
+                        pass
+
+                sex_raw = row.get('sex', 'U')
+                sex = 'U'
+                if pd.notna(sex_raw):
+                    sex_str = str(sex_raw).strip().upper()
+                    sex = sex_str if sex_str in ['M', 'F'] else 'U'
+
+                diagnosis_raw = row.get('diagnosis')
+                diagnosis = str(diagnosis_raw) if pd.notna(diagnosis_raw) else None
+
+                metadata_lookup[subj_id] = {
+                    'age': age,
+                    'sex': sex,
+                    'diagnosis': diagnosis
+                }
+
     # Process each NIFTI file
     print(f"\n{'='*70}")
     print("PROCESSING SCANS")
@@ -277,77 +442,154 @@ def batch_process_population_dataset(
 
     start_time = time.time()
 
-    for i, filepath in enumerate(nifti_files, 1):
-        subject_id = extract_subject_id_from_filename(filepath)
+    if workers > 1:
+        # PARALLEL PROCESSING
+        print(f"🚀 Processing scans in parallel with {workers} workers...\n")
 
-        print(f"[{i}/{len(nifti_files)}] Processing: {subject_id}")
-        print(f"  File: {os.path.basename(filepath)}")
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            # Submit all tasks
+            future_to_filepath = {}
+            for filepath in nifti_files:
+                subject_id = extract_subject_id_from_filename(filepath)
+                metadata_dict = metadata_lookup.get(subject_id)
 
-        try:
-            # Upload NIFTI file
-            print(f"  ↗️  Uploading...")
-            nifti_file, nifti_file_zipped = upload_nifti(
-                filepath,
-                user_id=None,
-                public_id=f"population-{dataset_name}-{subject_id}"
-            )
-            nifti_file_id = nifti_file['id']
-            stats['nifti_file_ids'].append(nifti_file_id)
+                future = executor.submit(
+                    process_single_scan,
+                    filepath,
+                    dataset_name,
+                    metadata_dict,
+                    skip_existing
+                )
+                future_to_filepath[future] = filepath
 
-            print(f"  ✓ Uploaded: {nifti_file_id}")
+            # Collect results as they complete
+            completed = 0
+            for future in as_completed(future_to_filepath):
+                filepath = future_to_filepath[future]
+                completed += 1
 
-            # Resample atlas
-            print(f"  🗺️  Resampling atlas...")
-            atlas_result = resample_atlas_for_user_nifti(nifti_file_id)
-            print(f"  ✓ Atlas resampled")
+                try:
+                    result = future.result()
+                    subject_id = result['subject_id']
 
-            # Calculate ROI volumes
-            print(f"  📊 Calculating ROI volumes...")
-            roi_volumes = calculate_roi_volumes(nifti_file_id)
-            print(f"  ✓ Calculated {len(roi_volumes)} ROI volumes")
+                    if result['status'] == 'skipped':
+                        print(f"[{completed}/{len(nifti_files)}] {subject_id}: ⏭️  Skipped (already processed)")
+                        stats['scans_skipped'] += 1
+                    elif result['status'] == 'success':
+                        print(f"[{completed}/{len(nifti_files)}] {subject_id}: ✅ Success")
+                        stats['scans_processed'] += 1
+                        if result['nifti_file_id']:
+                            stats['nifti_file_ids'].append(result['nifti_file_id'])
+                    elif result['status'] == 'failed':
+                        print(f"[{completed}/{len(nifti_files)}] {subject_id}: ❌ Failed - {result['error']}")
+                        stats['scans_failed'] += 1
 
-            # Get metadata for this subject
-            age = None
-            sex = 'U'
-            diagnosis = None
+                except Exception as e:
+                    print(f"[{completed}/{len(nifti_files)}] {os.path.basename(filepath)}: ❌ Failed - {str(e)}")
+                    stats['scans_failed'] += 1
 
-            if metadata_df is not None:
-                subject_meta = metadata_df[metadata_df['subject_id'] == subject_id]
-                if len(subject_meta) > 0:
-                    meta_row = subject_meta.iloc[0]
-                    age = meta_row.get('age')
-                    sex = meta_row.get('sex', 'U')
-                    diagnosis = meta_row.get('diagnosis')
+    else:
+        # SEQUENTIAL PROCESSING (original code)
+        for i, filepath in enumerate(nifti_files, 1):
+            subject_id = extract_subject_id_from_filename(filepath)
 
-            # Save population metadata
-            print(f"  💾 Saving population metadata...")
-            pop_record = save_population_scan_metadata(
-                nifti_file_id=nifti_file_id,
-                dataset_source=dataset_name,
-                subject_id=subject_id,
-                age=age,
-                sex=sex,
-                diagnosis=diagnosis
-            )
+            print(f"[{i}/{len(nifti_files)}] Processing: {subject_id}")
+            print(f"  File: {os.path.basename(filepath)}")
 
-            if pop_record:
-                print(f"  ✓ Population metadata saved")
-            else:
-                print(f"  ⚠️  Warning: Could not save population metadata")
+            # Check if already processed
+            if skip_existing and check_if_scan_exists(dataset_name, subject_id):
+                print(f"  ⏭️  Already processed - skipping")
+                stats['scans_skipped'] += 1
+                continue
 
-            stats['scans_processed'] += 1
-            print(f"  ✅ Complete! ({stats['scans_processed']}/{len(nifti_files)})\n")
+            try:
+                # Upload NIFTI file
+                print(f"  ↗️  Uploading...")
+                nifti_file, nifti_file_zipped = upload_nifti(
+                    filepath,
+                    user_id=None,
+                    public_id=f"population-{dataset_name}-{subject_id}"
+                )
+                nifti_file_id = nifti_file['id']
+                stats['nifti_file_ids'].append(nifti_file_id)
 
-            # Brief pause to avoid overwhelming the system
-            time.sleep(0.5)
+                print(f"  ✓ Uploaded: {nifti_file_id}")
 
-        except Exception as e:
-            print(f"  ❌ Error: {str(e)}")
-            print(f"\n  Stack trace:")
-            traceback.print_exc()
-            stats['scans_failed'] += 1
-            print(f"\n  Continuing to next scan...\n")
-            continue
+                # Resample atlas
+                print(f"  🗺️  Resampling atlas...")
+                atlas_result = resample_atlas_for_user_nifti(nifti_file_id)
+                print(f"  ✓ Atlas resampled")
+
+                # Calculate ROI volumes
+                print(f"  📊 Calculating ROI volumes...")
+                roi_volumes = calculate_roi_volumes(nifti_file_id)
+                print(f"  ✓ Calculated {len(roi_volumes)} ROI volumes")
+
+                # Get metadata for this subject
+                age = None
+                sex = 'U'
+                diagnosis = None
+
+                if metadata_df is not None:
+                    subject_meta = metadata_df[metadata_df['subject_id'] == subject_id]
+                    if len(subject_meta) > 0:
+                        meta_row = subject_meta.iloc[0]
+
+                        # Clean age (handle NaN, convert to int)
+                        age_raw = meta_row.get('age')
+                        if pd.notna(age_raw):
+                            try:
+                                age = int(float(age_raw))
+                            except (ValueError, TypeError):
+                                age = None
+
+                        # Clean sex (ensure M/F/U)
+                        sex_raw = meta_row.get('sex', 'U')
+                        if pd.notna(sex_raw):
+                            sex_str = str(sex_raw).strip().upper()
+                            sex = sex_str if sex_str in ['M', 'F'] else 'U'
+
+                        # Clean diagnosis
+                        diagnosis_raw = meta_row.get('diagnosis')
+                        if pd.notna(diagnosis_raw):
+                            diagnosis = str(diagnosis_raw)
+
+                        print(f"  📋 Metadata found: age={age}, sex={sex}, diagnosis={diagnosis}")
+                    else:
+                        print(f"  ⚠️  No metadata found for subject_id: {subject_id}")
+                        print(f"     CSV has these subject_ids: {metadata_df['subject_id'].head().tolist()}")
+                else:
+                    print(f"  ℹ️  No metadata CSV provided")
+
+                # Save population metadata
+                print(f"  💾 Saving population metadata...")
+                pop_record = save_population_scan_metadata(
+                    nifti_file_id=nifti_file_id,
+                    dataset_source=dataset_name,
+                    subject_id=subject_id,
+                    age=age,
+                    sex=sex,
+                    diagnosis=diagnosis
+                )
+
+                if pop_record:
+                    print(f"  ✓ Population metadata saved")
+                else:
+                    print(f"  ⚠️  Warning: Could not save population metadata")
+
+                stats['scans_processed'] += 1
+                print(f"  ✅ Complete! ({stats['scans_processed']}/{len(nifti_files)})\n")
+
+                # Brief pause to avoid overwhelming the system
+                time.sleep(0.5)
+
+            except Exception as e:
+                print(f"  ❌ Error: {str(e)}")
+                print(f"\n  Stack trace:")
+                traceback.print_exc()
+                stats['scans_failed'] += 1
+                print(f"\n  Continuing to next scan...\n")
+                continue
 
     stats['processing_time'] = time.time() - start_time
 
@@ -357,9 +599,11 @@ def batch_process_population_dataset(
     print(f"{'='*70}")
     print(f"Total scans found: {stats['total_scans']}")
     print(f"Successfully processed: {stats['scans_processed']}")
+    print(f"Skipped (already processed): {stats['scans_skipped']}")
     print(f"Failed: {stats['scans_failed']}")
     print(f"Processing time: {stats['processing_time']:.1f} seconds")
-    print(f"Average per scan: {stats['processing_time']/max(stats['scans_processed'], 1):.1f} seconds")
+    if stats['scans_processed'] > 0:
+        print(f"Average per scan: {stats['processing_time']/stats['scans_processed']:.1f} seconds")
     print(f"{'='*70}\n")
 
     if stats['scans_processed'] > 0:
@@ -382,10 +626,24 @@ Examples:
       --dataset oasis-1 \\
       --metadata research/input/datasets/oasis-1/selected_subjects.csv
 
+  # Process with 8 parallel workers (much faster!)
+  python -m functions.batch_process_population_dataset \\
+      research/input/datasets/oasis-1/raw \\
+      --dataset oasis-1 \\
+      --metadata research/input/datasets/oasis-1/selected_subjects.csv \\
+      --workers 8
+
   # Process first 10 scans (testing)
   python -m functions.batch_process_population_dataset \\
       research/input/datasets/oasis-1/raw \\
       --dataset oasis-1 \\
+      --count 10
+
+  # Skip first 10 scans and process next 10 (resume from offset)
+  python -m functions.batch_process_population_dataset \\
+      research/input/datasets/oasis-1/raw \\
+      --dataset oasis-1 \\
+      --offset 10 \\
       --count 10
 
   # Dry run to see what would be processed
@@ -393,25 +651,6 @@ Examples:
       research/input/datasets/oasis-1/raw \\
       --dataset oasis-1 \\
       --dry-run
-
-Database Setup Required:
-  Before running, create the 'population_scans' table in Supabase:
-
-  CREATE TABLE population_scans (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    nifti_file_id UUID NOT NULL UNIQUE,
-    dataset_source TEXT NOT NULL,
-    subject_id TEXT NOT NULL,
-    age INTEGER,
-    sex TEXT CHECK (sex IN ('M', 'F', 'U')),
-    diagnosis TEXT,
-    scan_quality FLOAT,
-    processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    FOREIGN KEY (nifti_file_id) REFERENCES nifti_files(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX idx_population_scans_dataset ON population_scans(dataset_source);
-  CREATE INDEX idx_population_scans_age_sex ON population_scans(age, sex);
         """
     )
 
@@ -454,6 +693,20 @@ Database Setup Required:
         help='Reprocess existing scans (default: skip)'
     )
 
+    parser.add_argument(
+        '--offset',
+        type=int,
+        default=0,
+        help='Skip first N scans (useful for resuming interrupted processing)'
+    )
+
+    parser.add_argument(
+        '--workers',
+        type=int,
+        default=1,
+        help='Number of parallel workers (default: 1 = sequential, use 4-8 for parallel)'
+    )
+
     args = parser.parse_args()
 
     # Validate directory exists
@@ -468,7 +721,9 @@ Database Setup Required:
             metadata_csv=args.metadata,
             max_scans=args.count,
             skip_existing=not args.overwrite,
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
+            offset=args.offset,
+            workers=args.workers
         )
 
         if result['scans_failed'] > 0:

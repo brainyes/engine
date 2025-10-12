@@ -11,10 +11,17 @@ from functions.generate_surface_files import generate_surface_files
 from functions.freesurfer_parse_statistics import freesurfer_parse_statistics
 from functions.generate_visualization_data import generate_visualization_data
 from functions.calculate_memory_metrics import calculate_memory_metrics
+from functions.compare_to_population_norms import compare_to_population_norms
 
 FUNCTION_NAME = "mri_processing_pipeline"
 
-def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
+def mri_processing_pipeline(
+    nifti_file_id,
+    user_id=None,
+    age=None,
+    sex='U',
+    **kwargs
+):
     """
     Complete MRI processing pipeline - runs all functions locally/synchronously
     Designed to run in ECS Fargate with all dependencies available
@@ -22,6 +29,8 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
     Args:
         nifti_file_id (str): The ID of the NIFTI file to process
         user_id (str): Optional user ID for tracking
+        age (int): Optional age for population comparison
+        sex (str): Optional sex ('M', 'F', or 'U') for population comparison
 
     Returns:
         dict: Complete pipeline results
@@ -43,21 +52,21 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
     try:
         # STEP 1: Resample Atlas
         print("\n" + "="*80)
-        print("STEP 1/8: Resampling Atlas")
+        print("STEP 1/9: Resampling Atlas")
         print("="*80)
         results['resample_atlas'] = resample_atlas_for_user_nifti(nifti_file_id)
         results['steps_completed'].append('resample_atlas')
 
         # STEP 2: Calculate ROI Volumes
         print("\n" + "="*80)
-        print("STEP 2/8: Calculating ROI Volumes")
+        print("STEP 2/9: Calculating ROI Volumes")
         print("="*80)
         results['roi_volumes'] = calculate_roi_volumes(nifti_file_id)
         results['steps_completed'].append('roi_volumes')
 
         # STEP 3: FreeSurfer Recon-All (LONG!)
         print("\n" + "="*80)
-        print("STEP 3/8: FreeSurfer Recon-All")
+        print("STEP 3/9: FreeSurfer Recon-All")
         print("⚠️  This step takes 4-8 hours")
         print("="*80)
         freesurfer_result = freesurfer_recon_all(nifti_file_id, user_id=user_id)
@@ -73,7 +82,7 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
 
         # STEP 4: Store FreeSurfer Files
         print("\n" + "="*80)
-        print("STEP 4/8: Storing FreeSurfer Files")
+        print("STEP 4/9: Storing FreeSurfer Files")
         print("="*80)
         results['store_files'] = freesurfer_store_files(
             nifti_file_id=nifti_file_id,
@@ -84,7 +93,7 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
 
         # STEP 5: Generate Surface Files (.asc)
         print("\n" + "="*80)
-        print("STEP 5/8: Generating Surface Files (.asc)")
+        print("STEP 5/9: Generating Surface Files (.asc)")
         print("="*80)
         results['surface_files'] = generate_surface_files(
             nifti_file_id=nifti_file_id,
@@ -95,7 +104,7 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
 
         # STEP 6: Parse Statistics
         print("\n" + "="*80)
-        print("STEP 6/8: Parsing Statistics")
+        print("STEP 6/9: Parsing Statistics")
         print("="*80)
         results['parse_statistics'] = freesurfer_parse_statistics(
             nifti_file_id=nifti_file_id,
@@ -106,7 +115,7 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
 
         # STEP 7: Generate Visualization Data
         print("\n" + "="*80)
-        print("STEP 7/8: Generating Visualization Data")
+        print("STEP 7/9: Generating Visualization Data")
         print("="*80)
         results['visualization'] = generate_visualization_data(
             nifti_file_id=nifti_file_id,
@@ -116,15 +125,37 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
 
         # STEP 8: Calculate Memory Metrics
         print("\n" + "="*80)
-        print("STEP 8/8: Calculating Memory Metrics")
+        print("STEP 8/9: Calculating Memory Metrics")
         print("="*80)
         results['memory_metrics'] = calculate_memory_metrics(nifti_file_id)
         results['steps_completed'].append('memory_metrics')
 
+        # STEP 9: Compare to Population Norms
+        print("\n" + "="*80)
+        print("STEP 9/9: Comparing to Population Norms")
+        print("="*80)
+        try:
+            # Note: age and sex parameters are now optional
+            # The function will automatically fetch from user profile if not provided
+            population_comparison = compare_to_population_norms(
+                nifti_file_id=nifti_file_id,
+                age=age,  # Optional: will fetch from user profile if None
+                sex=sex,  # Optional: will fetch from user profile if None
+                save_to_db=True,
+                include_global_measures=True
+            )
+            results['population_comparison'] = population_comparison
+            results['steps_completed'].append('population_comparison')
+            print("  ✓ Population comparison completed successfully")
+        except Exception as pop_error:
+            print(f"  ⚠️  Population comparison skipped: {str(pop_error)}")
+            print("     This is optional and may not be available for all scans")
+            results['population_comparison_skipped'] = str(pop_error)
+
         # SUCCESS!
         print("\n" + "="*80)
         print("🎉 PIPELINE COMPLETE!")
-        print(f"Steps completed: {len(results['steps_completed'])}/8")
+        print(f"Steps completed: {len(results['steps_completed'])}/9")
         print(f"Finished: {datetime.now().isoformat()}")
         print("="*80)
 
@@ -157,6 +188,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run MRI processing pipeline locally (all steps in one process)')
     parser.add_argument('nifti_file_id', help='NIFTI file ID')
     parser.add_argument('--user-id', help='User ID (optional)')
+    parser.add_argument('--age', type=int, help='Age in years (optional - will fetch from user profile if not provided)')
+    parser.add_argument('--sex', choices=['M', 'F', 'U'], help='Sex (M/F/U, optional - will fetch from user profile if not provided)')
 
     args = parser.parse_args()
 
@@ -170,11 +203,17 @@ if __name__ == "__main__":
     print("6. Parse statistics (~30s)")
     print("7. Generate visualization data (custom_regions_de_ki) (~30s)")
     print("8. Calculate memory metrics (~30s)")
-    print("\nTotal expected time: 4-8 hours")
+    print("9. Compare to population norms (~30s)")
+    print(f"\nTotal expected time: 4-8 hours")
     print("All steps run directly without API calls\n")
 
     try:
-        result = mri_processing_pipeline(args.nifti_file_id, args.user_id)
+        result = mri_processing_pipeline(
+            nifti_file_id=args.nifti_file_id,
+            user_id=args.user_id,
+            age=args.age,
+            sex=args.sex
+        )
         print("\n✅ Pipeline successful!")
         print(f"Completed steps: {result['steps_completed']}")
     except Exception as e:
