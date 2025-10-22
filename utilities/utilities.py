@@ -19,7 +19,13 @@ def save_to_temp_file(nifti_gz_data, original_name_or_extension=".nii", prefix="
     Returns:
         str: Path to the temporary file
     """
-    extension = os.path.splitext(original_name_or_extension)[1] if '.' in original_name_or_extension else original_name_or_extension
+    # Handle .nii.gz specially (os.path.splitext doesn't handle double extensions)
+    if original_name_or_extension.endswith('.nii.gz'):
+        extension = '.nii.gz'
+    elif '.' in original_name_or_extension:
+        extension = os.path.splitext(original_name_or_extension)[1]
+    else:
+        extension = original_name_or_extension
 
     # Create a temporary file
     temp_file = tempfile.NamedTemporaryFile(prefix=prefix,

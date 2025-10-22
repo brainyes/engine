@@ -209,8 +209,8 @@ def process_single_scan(
         nifti_file_id = nifti_file['id']
         result['nifti_file_id'] = nifti_file_id
 
-        # Resample atlas
-        atlas_result = resample_atlas_for_user_nifti(nifti_file_id)
+        # Resample atlas (population mode: skip FreeSurfer, use MNI atlases only)
+        atlas_result = resample_atlas_for_user_nifti(nifti_file_id, population_mode=True)
 
         # Calculate ROI volumes
         roi_volumes = calculate_roi_volumes(nifti_file_id)
@@ -515,9 +515,9 @@ def batch_process_population_dataset(
 
                 print(f"  ✓ Uploaded: {nifti_file_id}")
 
-                # Resample atlas
-                print(f"  🗺️  Resampling atlas...")
-                atlas_result = resample_atlas_for_user_nifti(nifti_file_id)
+                # Resample atlas (population mode: skip FreeSurfer, use MNI atlases only)
+                print(f"  🗺️  Resampling atlas (population mode)...")
+                atlas_result = resample_atlas_for_user_nifti(nifti_file_id, population_mode=True)
                 print(f"  ✓ Atlas resampled")
 
                 # Calculate ROI volumes

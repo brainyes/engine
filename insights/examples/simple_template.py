@@ -1,6 +1,4 @@
-import inngest
 
-from utilities.inngest import client as inngest_client
 from utilities.supabase_utilities import save_insight_type
 
 # Simple parameters - just what you need
@@ -37,15 +35,6 @@ def main(**parameters):
     
     ########## PAPER ENDS ##########
     return volumes
-
-
-@inngest_client.create_function(
-    fn_id="insights/" + INSIGHT_NAME,
-    trigger=inngest.TriggerEvent(event=INSIGHT_NAME),
-)
-async def fn(ctx: inngest.Context, step: inngest.Step):
-    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-    return main(**parameters)
 
 # example:
 if __name__=="__main__":

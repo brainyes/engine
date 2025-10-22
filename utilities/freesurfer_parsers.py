@@ -341,15 +341,18 @@ def parse_annot_file(annot_file_path: str) -> Dict[str, Any]:
     regions = {}
 
     # Process color table and create regions
-    for i, (r, g, b, a, label) in enumerate(ctab):
+    # Key by actual region index (i) since that's what the labels array references
+    for i, (r, g, b, a, label_id) in enumerate(ctab):
         name = names[i].decode('utf-8') if isinstance(names[i], bytes) else names[i]
+        # Use i as the key since labels array contains indices into ctab (not label_id)
         regions[i] = {
             "id": i,
             "name": name,
             "color": {"r": int(r), "g": int(g), "b": int(b), "a": 255}
         }
 
-    # The labels array already contains the correct indices (0 to N-1)
+    # Labels array contains indices into the ctab (color table)
+    # Each vertex gets the index of its region in the color table
     vertex_labels = [int(l) for l in labels]
 
     return {

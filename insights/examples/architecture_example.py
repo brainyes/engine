@@ -1,6 +1,4 @@
 # Example of layered insight architecture
-import inngest
-from utilities.inngest import client as inngest_client
 from utilities.supabase_utilities import save_insight_type
 
 # Different processing "modes" for different insights
@@ -69,13 +67,5 @@ def create_insight_template(insight_class):
         data = insight.get_data(parameters)
         results = insight.analyze(data, parameters)
         return results
-    
-    @inngest_client.create_function(
-        fn_id=f"insights/{insight.insight_name}",
-        trigger=inngest.TriggerEvent(event=insight.insight_name),
-    )
-    async def fn(ctx: inngest.Context, step: inngest.Step):
-        parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-        return main(**parameters)
     
     return main, fn 

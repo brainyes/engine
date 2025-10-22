@@ -89,16 +89,51 @@ def get_all_nifti_files():
     nifti_files = response.data
     return nifti_files
 
-def get_roi_volumes_for_niftis():
-    response = supabase.schema("public").table("roi_volumes").select("*").execute()
+def get_roi_volumes_for_niftis(atlas_name=None):
+    """
+    Get ROI volumes for all NIFTI files, optionally filtered by atlas
+
+    Args:
+        atlas_name: Optional atlas name to filter by. If None, returns all atlases.
+
+    Returns:
+        Dictionary: {nifti_file_id: {label: volume}}
+        If atlas_name is None: {nifti_file_id: {atlas_name: {label: volume}}}
+
+    Example:
+        # Get volumes for specific atlas
+        volumes = get_roi_volumes_for_niftis('hcpex')
+        # Returns: {nifti_id: {label: volume, ...}, ...}
+
+        # Get all volumes (grouped by atlas)
+        all_volumes = get_roi_volumes_for_niftis()
+        # Returns: {nifti_id: {'harvard-oxford': {label: volume}, 'hcpex': {label: volume}}, ...}
+    """
+    query = supabase.schema("public").table("roi_volumes").select("*")
+
+    if atlas_name:
+        query = query.eq("atlas_name", atlas_name)
+
+    response = query.execute()
     grouped_data = {}
-    # group by nifti_file_id, returned dictionary looks like:
-    # {nifti_file_id: {label1: volume}}
+
     for record in response.data:
         nifti_file_id = record['nifti_file_id']
-        if nifti_file_id not in grouped_data:
-            grouped_data[nifti_file_id] = {}
-        grouped_data[nifti_file_id][record['label']] = record['volume']
+        current_atlas = record.get('atlas_name', 'harvard-oxford')  # Handle legacy data
+
+        if atlas_name:
+            # Simple grouping by nifti_file_id only
+            if nifti_file_id not in grouped_data:
+                grouped_data[nifti_file_id] = {}
+            grouped_data[nifti_file_id][record['label']] = record['volume']
+        else:
+            # Group by nifti_file_id and atlas_name
+            if nifti_file_id not in grouped_data:
+                grouped_data[nifti_file_id] = {}
+            if current_atlas not in grouped_data[nifti_file_id]:
+                grouped_data[nifti_file_id][current_atlas] = {}
+            grouped_data[nifti_file_id][current_atlas][record['label']] = record['volume']
+
     return grouped_data
 
 def get_nifti_file(nifti_file_or_id, download = False):
@@ -132,35 +167,52 @@ def download_nifti_file(nifti_file = None, storage_object = None):
     nifti_gz_data = supabase.storage.from_("nifti_gz_files").download(storage_object['name'])
     return save_to_temp_file(nifti_gz_data, storage_object['name'])
 
-def upload_resampled_atlas(user_id, nifti_file_id, file_data):
+def upload_resampled_atlas(user_id, nifti_file_id, file_data, atlas_name='hcpex'):
     """
     Upload resampled atlas for a given nifti file.
-    Uses known storage path pattern: {user_id}/{nifti_file_id}/atlas-resampled.nii
+    Uses known storage path pattern: {user_id}/{nifti_file_id}/{atlas_name}-resampled.nii.gz
 
     Args:
         user_id: The user ID (for RLS compliance)
         nifti_file_id: The nifti file ID
-        file_data: The file data (bytes) to upload
+        file_data: The file data (bytes) to upload - should be gzipped
+        atlas_name: Name of the atlas (default: 'hcpex')
 
     Returns:
         The storage path where the file was uploaded
+
+    Example:
+        upload_resampled_atlas(user_id, nifti_id, data, 'hcpex')
+        # Creates: user_id/nifti_id/hcpex-resampled.nii.gz
     """
-    storage_path = f"{user_id}/{nifti_file_id}/atlas-resampled.nii"
+    storage_path = f"{user_id}/{nifti_file_id}/{atlas_name}-resampled.nii.gz"
     supabase.storage.from_("nifti_gz_files").upload(
         file=file_data,
         path=storage_path,
-        file_options={"content-type": "application/octet-stream; charset=binary", "upsert": "true"}
+        file_options={"content-type": "application/gzip", "upsert": "true"}
     )
     return storage_path
 
-def download_resampled_atlas(user_id, nifti_file_id):
+def download_resampled_atlas(user_id, nifti_file_id, atlas_name='hcpex'):
     """
     Download resampled atlas for a given nifti file.
-    Uses known storage path pattern: {user_id}/{nifti_file_id}/atlas-resampled.nii
+    Uses known storage path pattern: {user_id}/{nifti_file_id}/{atlas_name}-resampled.nii.gz
+
+    Args:
+        user_id: The user ID
+        nifti_file_id: The nifti file ID
+        atlas_name: Name of the atlas (default: 'hcpex')
+
+    Returns:
+        Path to temporary file containing atlas data
+
+    Example:
+        atlas_path = download_resampled_atlas(user_id, nifti_id, 'hcpex')
     """
-    storage_path = f"{user_id}/{nifti_file_id}/atlas-resampled.nii"
+    storage_path = f"{user_id}/{nifti_file_id}/{atlas_name}-resampled.nii.gz"
     atlas_data = supabase.storage.from_("nifti_gz_files").download(storage_path)
-    return save_to_temp_file(atlas_data, "atlas-resampled.nii")
+    # Use .nii.gz extension explicitly (save_to_temp_file only catches single extensions)
+    return save_to_temp_file(atlas_data, ".nii.gz")
 
 def get_user_meta(user_id, meta_key):
     meta_value = (supabase.schema("public").table("usermeta")
@@ -171,8 +223,30 @@ def get_user_meta(user_id, meta_key):
         return cast_value(meta_value.data['meta_value'])
     return None
 
-def get_roi_volumes(nifti_file_id):
-    response = supabase.schema("public").table("roi_volumes").select("*").eq("nifti_file_id", nifti_file_id).execute()
+def get_roi_volumes(nifti_file_id, atlas_name=None):
+    """
+    Get ROI volumes for a specific NIFTI file
+
+    Args:
+        nifti_file_id: The NIFTI file ID
+        atlas_name: Optional atlas name to filter by. If None, returns all atlases.
+
+    Returns:
+        Dictionary mapping label -> volume
+
+    Example:
+        # Get volumes for specific atlas
+        volumes = get_roi_volumes(nifti_id, 'hcpex')
+
+        # Get all volumes (all atlases)
+        all_volumes = get_roi_volumes(nifti_id)
+    """
+    query = supabase.schema("public").table("roi_volumes").select("*").eq("nifti_file_id", nifti_file_id)
+
+    if atlas_name:
+        query = query.eq("atlas_name", atlas_name)
+
+    response = query.execute()
     volumes = response.data
     roi_volumes = {}
     for volume in volumes:

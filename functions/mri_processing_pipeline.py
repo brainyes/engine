@@ -10,6 +10,7 @@ from functions.freesurfer_store_files import freesurfer_store_files
 from functions.generate_surface_files import generate_surface_files
 from functions.freesurfer_parse_statistics import freesurfer_parse_statistics
 from functions.generate_visualization_data import generate_visualization_data
+from functions.prepare_volume_visualization import prepare_volume_visualization
 from functions.calculate_memory_metrics import calculate_memory_metrics
 from functions.compare_to_population_norms import compare_to_population_norms
 
@@ -26,6 +27,8 @@ def mri_processing_pipeline(
     Complete MRI processing pipeline - runs all functions locally/synchronously
     Designed to run in ECS Fargate with all dependencies available
 
+    Automatically processes with ALL available brain atlases.
+
     Args:
         nifti_file_id (str): The ID of the NIFTI file to process
         user_id (str): Optional user ID for tracking
@@ -39,34 +42,35 @@ def mri_processing_pipeline(
     print("="*80)
     print(f"🧠 BRAINYES MRI PROCESSING PIPELINE (LOCAL/SYNC)")
     print(f"NIFTI File ID: {nifti_file_id}")
+    print(f"Atlas Processing: All available atlases")
     print(f"ECS Task ID: {os.environ.get('TASK_ID', 'unknown')}")
     print(f"Started: {datetime.now().isoformat()}")
     print("="*80)
 
     results = {
         'nifti_file_id': nifti_file_id,
-        'pipeline_version': '2.0-local',
+        'pipeline_version': '2.2-multi-atlas-volume-viz',
         'steps_completed': []
     }
 
     try:
-        # STEP 1: Resample Atlas
+        # STEP 1: Resample Atlas (all atlases)
         print("\n" + "="*80)
-        print("STEP 1/9: Resampling Atlas")
+        print(f"STEP 1/10: Resampling Atlases (all available)")
         print("="*80)
         results['resample_atlas'] = resample_atlas_for_user_nifti(nifti_file_id)
         results['steps_completed'].append('resample_atlas')
 
-        # STEP 2: Calculate ROI Volumes
+        # STEP 2: Calculate ROI Volumes (all atlases)
         print("\n" + "="*80)
-        print("STEP 2/9: Calculating ROI Volumes")
+        print(f"STEP 2/10: Calculating ROI Volumes (all atlases)")
         print("="*80)
         results['roi_volumes'] = calculate_roi_volumes(nifti_file_id)
         results['steps_completed'].append('roi_volumes')
 
         # STEP 3: FreeSurfer Recon-All (LONG!)
         print("\n" + "="*80)
-        print("STEP 3/9: FreeSurfer Recon-All")
+        print("STEP 3/10: FreeSurfer Recon-All")
         print("⚠️  This step takes 4-8 hours")
         print("="*80)
         freesurfer_result = freesurfer_recon_all(nifti_file_id, user_id=user_id)
@@ -82,7 +86,7 @@ def mri_processing_pipeline(
 
         # STEP 4: Store FreeSurfer Files
         print("\n" + "="*80)
-        print("STEP 4/9: Storing FreeSurfer Files")
+        print("STEP 4/10: Storing FreeSurfer Files")
         print("="*80)
         results['store_files'] = freesurfer_store_files(
             nifti_file_id=nifti_file_id,
@@ -93,7 +97,7 @@ def mri_processing_pipeline(
 
         # STEP 5: Generate Surface Files (.asc)
         print("\n" + "="*80)
-        print("STEP 5/9: Generating Surface Files (.asc)")
+        print("STEP 5/10: Generating Surface Files (.asc)")
         print("="*80)
         results['surface_files'] = generate_surface_files(
             nifti_file_id=nifti_file_id,
@@ -104,7 +108,7 @@ def mri_processing_pipeline(
 
         # STEP 6: Parse Statistics
         print("\n" + "="*80)
-        print("STEP 6/9: Parsing Statistics")
+        print("STEP 6/10: Parsing Statistics")
         print("="*80)
         results['parse_statistics'] = freesurfer_parse_statistics(
             nifti_file_id=nifti_file_id,
@@ -115,28 +119,35 @@ def mri_processing_pipeline(
 
         # STEP 7: Generate Visualization Data
         print("\n" + "="*80)
-        print("STEP 7/9: Generating Visualization Data")
+        print("STEP 7/10: Generating Visualization Data")
         print("="*80)
         results['visualization'] = generate_visualization_data(
             nifti_file_id=nifti_file_id,
-            parcellation='custom_regions_de_ki'
+            parcellation='aparc'  # Use standard Desikan-Killiany atlas
         )
         results['steps_completed'].append('visualization_data')
 
-        # STEP 8: Calculate Memory Metrics
+        # STEP 8: Prepare Volume Visualization (NEW!)
         print("\n" + "="*80)
-        print("STEP 8/9: Calculating Memory Metrics")
+        print("STEP 8/10: Preparing Volume Visualization (Region Meshes)")
+        print("="*80)
+        results['volume_visualization'] = prepare_volume_visualization(nifti_file_id)
+        results['steps_completed'].append('volume_visualization')
+
+        # STEP 9: Calculate Memory Metrics
+        print("\n" + "="*80)
+        print("STEP 9/10: Calculating Memory Metrics")
         print("="*80)
         results['memory_metrics'] = calculate_memory_metrics(nifti_file_id)
         results['steps_completed'].append('memory_metrics')
 
-        # STEP 9: Compare to Population Norms
+        # STEP 10: Compare to Population Norms (all atlases)
         print("\n" + "="*80)
-        print("STEP 9/9: Comparing to Population Norms")
+        print(f"STEP 10/10: Comparing to Population Norms (all atlases)")
         print("="*80)
         try:
-            # Note: age and sex parameters are now optional
-            # The function will automatically fetch from user profile if not provided
+            # Note: age and sex are optional - will fetch from user profile if not provided
+            # Automatically processes all available atlases
             population_comparison = compare_to_population_norms(
                 nifti_file_id=nifti_file_id,
                 age=age,  # Optional: will fetch from user profile if None
@@ -155,7 +166,7 @@ def mri_processing_pipeline(
         # SUCCESS!
         print("\n" + "="*80)
         print("🎉 PIPELINE COMPLETE!")
-        print(f"Steps completed: {len(results['steps_completed'])}/9")
+        print(f"Steps completed: {len(results['steps_completed'])}/10")
         print(f"Finished: {datetime.now().isoformat()}")
         print("="*80)
 
@@ -195,16 +206,17 @@ if __name__ == "__main__":
 
     print("=== MRI PROCESSING PIPELINE (LOCAL) ===")
     print("This will run the complete processing pipeline in this process:")
-    print("1. Resample atlas (~30s)")
-    print("2. Calculate ROI volumes (~30s)")
+    print("1. Resample ALL atlases (~1 min)")
+    print("2. Calculate ROI volumes for ALL atlases (~1 min)")
     print("3. FreeSurfer recon-all (4-8 hours)")
     print("4. Store FreeSurfer files (~1 min)")
     print("5. Generate surface files (.asc) (~1 min)")
     print("6. Parse statistics (~30s)")
-    print("7. Generate visualization data (custom_regions_de_ki) (~30s)")
+    print("7. Generate visualization data (aparc) (~30s)")
     print("8. Calculate memory metrics (~30s)")
-    print("9. Compare to population norms (~30s)")
-    print(f"\nTotal expected time: 4-8 hours")
+    print("9. Compare to population norms for ALL atlases (~1 min)")
+    print("\nAtlases: All available (Harvard-Oxford, HCPex)")
+    print("Total expected time: 4-8 hours")
     print("All steps run directly without API calls\n")
 
     try:

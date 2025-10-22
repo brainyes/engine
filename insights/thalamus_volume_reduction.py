@@ -1,7 +1,5 @@
-import inngest
 import pandas as pd
 
-from utilities.inngest import client as inngest_client
 from utilities.supabase_utilities import get_nifti_file, get_roi_volumes_for_niftis, get_user_insight, get_roi_volumes, \
     save_insight_output, save_insight_type
 
@@ -148,7 +146,6 @@ df_global_left = pd.DataFrame(global_left_thalamus)
 df_first_episode_right = pd.DataFrame(first_episode_right)
 df_first_episode_left = pd.DataFrame(first_episode_left)
 
-
 def main(**parameters):
     ########## PAPER STARTS ##########
     if not parameters:
@@ -196,16 +193,6 @@ def main(**parameters):
 
     ########## PAPER ENDS ##########
     return insight
-
-
-@inngest_client.create_function(
-    fn_id="insights/" + INSIGHT_NAME,
-    trigger=inngest.TriggerEvent(event=INSIGHT_NAME),
-)
-async def fn(ctx: inngest.Context, step: inngest.Step):
-    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-    return main(**parameters)
-
 
 # example:
 if __name__ == "__main__":

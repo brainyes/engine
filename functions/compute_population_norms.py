@@ -26,7 +26,7 @@ from typing import Dict, List, Tuple
 from datetime import datetime
 
 from utilities.data import supabase
-from utilities.volume_labels import volume_labels_dict
+from utilities.volume_labels import get_region_name  # For structure_name field
 
 FUNCTION_NAME = "compute_population_norms"
 
@@ -84,7 +84,7 @@ def get_roi_volumes_for_scans(nifti_file_ids: List[str]) -> pd.DataFrame:
         nifti_file_ids: List of NIFTI file IDs
 
     Returns:
-        DataFrame with columns: nifti_file_id, label, volume
+        DataFrame with columns: nifti_file_id, label, volume, atlas_name
     """
     print(f"📊 Fetching ROI volumes for {len(nifti_file_ids)} scans...")
 
@@ -94,11 +94,16 @@ def get_roi_volumes_for_scans(nifti_file_ids: List[str]) -> pd.DataFrame:
 
     for i in range(0, len(nifti_file_ids), batch_size):
         batch = nifti_file_ids[i:i + batch_size]
-        response = supabase.table('roi_volumes').select('*').in_('nifti_file_id', batch).execute()
+        response = supabase.table('roi_volumes').select('nifti_file_id, label, volume, atlas_name').in_('nifti_file_id', batch).execute()
         all_volumes.extend(response.data)
 
     df = pd.DataFrame(all_volumes)
     print(f"  ✓ Retrieved {len(df)} ROI volume measurements")
+
+    # Check if we have atlas_name column
+    if 'atlas_name' not in df.columns and len(df) > 0:
+        print(f"  ⚠️  Warning: atlas_name column missing from roi_volumes")
+        print(f"     Available columns: {list(df.columns)}")
 
     return df
 
@@ -237,11 +242,23 @@ def compute_population_norms(
         print("❌ No ROI volumes found. Make sure scans have been processed.")
         return {'norms_computed': 0}
 
+    # Drop atlas_name from scans_df if it exists (it shouldn't be there)
+    if 'atlas_name' in scans_df.columns:
+        scans_df = scans_df.drop(columns=['atlas_name'])
+
     # Merge scans with volumes
     data_df = volumes_df.merge(scans_df, on='nifti_file_id')
 
     print(f"\n  Total ROI measurements: {len(data_df)}")
     print(f"  Unique ROIs: {data_df['label'].nunique()}")
+
+    # Check if atlas_name column exists after merge
+    if 'atlas_name' not in data_df.columns:
+        print(f"\n  ❌ Error: atlas_name column missing after merge!")
+        print(f"     volumes_df columns: {list(volumes_df.columns)}")
+        print(f"     scans_df columns: {list(scans_df.columns)}")
+        print(f"     data_df columns: {list(data_df.columns)}")
+        return {'norms_computed': 0}
 
     # Step 3: Create age bins
     age_bins = create_age_bins(
@@ -266,84 +283,96 @@ def compute_population_norms(
     strata_computed = 0
     strata_skipped = 0
 
-    # Get unique ROI labels
+    # Get unique ROI labels and atlases
     roi_labels = sorted(data_df['label'].unique())
+    atlases = sorted(data_df['atlas_name'].unique())
 
-    for roi_label in roi_labels:
-        roi_data = data_df[data_df['label'] == roi_label]
+    print(f"  Atlases: {', '.join(atlases)}")
 
-        # Get ROI name if available (convert float to int if needed)
-        roi_label_int = int(float(roi_label))
-        roi_name = volume_labels_dict.get(roi_label_int, f"ROI_{roi_label_int}")
+    # Compute norms for each atlas separately
+    for atlas_name in atlases:
+        atlas_data = data_df[data_df['atlas_name'] == atlas_name]
+        atlas_roi_labels = sorted(atlas_data['label'].unique())
 
-        for age_min, age_max in age_bins:
-            age_data = roi_data[(roi_data['age_bin'] == (age_min, age_max))]
+        for roi_label in atlas_roi_labels:
+            roi_data = atlas_data[atlas_data['label'] == roi_label]
 
-            # Compute for each sex
-            for sex in ['M', 'F']:
-                sex_data = age_data[age_data['sex'] == sex]
-                volumes = sex_data['volume'].values
+            # Convert label to integer
+            roi_label_int = int(float(roi_label))
+            # Note: structure_name is redundant (can be derived from roi_label + atlas_name)
+            # but kept for database compatibility. To remove, make column nullable in DB first.
+            structure_name = get_region_name(roi_label_int, atlas_name)
 
-                if len(volumes) >= min_samples:
-                    stats = compute_statistics(volumes)
+            for age_min, age_max in age_bins:
+                age_data = roi_data[(roi_data['age_bin'] == (age_min, age_max))]
 
-                    if stats:
-                        record = {
-                            'structure_name': roi_name,
-                            'roi_label': roi_label_int,
-                            'age_min': age_min,
-                            'age_max': age_max,
-                            'sex': sex,
-                            'mean': stats['mean'],
-                            'std': stats['std'],
-                            'p10': stats['p10'],
-                            'p25': stats['p25'],
-                            'p50': stats['p50'],
-                            'p75': stats['p75'],
-                            'p90': stats['p90'],
-                            'sample_size': stats['sample_size'],
-                            'dataset_sources': list(datasets),
-                            'computed_at': datetime.now().isoformat(),
-                            'unit': 'mm³',
-                            'source': f'Computed from {len(scans_df)} scans across {len(datasets)} dataset(s)'
-                        }
+                # Compute for each sex
+                for sex in ['M', 'F']:
+                    sex_data = age_data[age_data['sex'] == sex]
+                    volumes = sex_data['volume'].values
 
-                        normative_records.append(record)
-                        strata_computed += 1
-                else:
-                    strata_skipped += 1
+                    if len(volumes) >= min_samples:
+                        stats = compute_statistics(volumes)
 
-            # Compute combined sex if requested
-            if compute_combined_sex:
-                combined_data = age_data[age_data['sex'].isin(['M', 'F', 'U'])]
-                volumes = combined_data['volume'].values
+                        if stats:
+                            record = {
+                                'structure_name': structure_name,  # Redundant but required by DB
+                                'roi_label': roi_label_int,
+                                'age_min': age_min,
+                                'age_max': age_max,
+                                'sex': sex,
+                                'atlas_name': atlas_name,
+                                'mean': stats['mean'],
+                                'std': stats['std'],
+                                'p10': stats['p10'],
+                                'p25': stats['p25'],
+                                'p50': stats['p50'],
+                                'p75': stats['p75'],
+                                'p90': stats['p90'],
+                                'sample_size': stats['sample_size'],
+                                'dataset_sources': list(datasets),
+                                'computed_at': datetime.now().isoformat(),
+                                'unit': 'mm³',
+                                'source': f'Computed from {len(scans_df)} scans across {len(datasets)} dataset(s)'
+                            }
 
-                if len(volumes) >= min_samples:
-                    stats = compute_statistics(volumes)
+                            normative_records.append(record)
+                            strata_computed += 1
+                    else:
+                        strata_skipped += 1
 
-                    if stats:
-                        record = {
-                            'structure_name': roi_name,
-                            'roi_label': roi_label_int,
-                            'age_min': age_min,
-                            'age_max': age_max,
-                            'sex': 'U',  # Combined
-                            'mean': stats['mean'],
-                            'std': stats['std'],
-                            'p10': stats['p10'],
-                            'p25': stats['p25'],
-                            'p50': stats['p50'],
-                            'p75': stats['p75'],
-                            'p90': stats['p90'],
-                            'sample_size': stats['sample_size'],
-                            'dataset_sources': list(datasets),
-                            'computed_at': datetime.now().isoformat(),
-                            'unit': 'mm³',
-                            'source': f'Computed from {len(scans_df)} scans across {len(datasets)} dataset(s)'
-                        }
+                # Compute combined sex if requested
+                if compute_combined_sex:
+                    combined_data = age_data[age_data['sex'].isin(['M', 'F', 'U'])]
+                    volumes = combined_data['volume'].values
 
-                        normative_records.append(record)
-                        strata_computed += 1
+                    if len(volumes) >= min_samples:
+                        stats = compute_statistics(volumes)
+
+                        if stats:
+                            record = {
+                                'structure_name': structure_name,  # Redundant but required by DB
+                                'roi_label': roi_label_int,
+                                'age_min': age_min,
+                                'age_max': age_max,
+                                'sex': 'U',  # Combined
+                                'atlas_name': atlas_name,
+                                'mean': stats['mean'],
+                                'std': stats['std'],
+                                'p10': stats['p10'],
+                                'p25': stats['p25'],
+                                'p50': stats['p50'],
+                                'p75': stats['p75'],
+                                'p90': stats['p90'],
+                                'sample_size': stats['sample_size'],
+                                'dataset_sources': list(datasets),
+                                'computed_at': datetime.now().isoformat(),
+                                'unit': 'mm³',
+                                'source': f'Computed from {len(scans_df)} scans across {len(datasets)} dataset(s)'
+                            }
+
+                            normative_records.append(record)
+                            strata_computed += 1
 
     print(f"  ✓ Computed norms for {strata_computed} strata")
     print(f"  ℹ️  Skipped {strata_skipped} strata (insufficient samples)")
@@ -355,14 +384,27 @@ def compute_population_norms(
         # Delete existing norms for these datasets (if filtering by dataset)
         if dataset_name:
             print(f"  Clearing existing norms for dataset: {dataset_name}")
-            # Note: This requires dataset_sources column to be array type
-            supabase.table('normative_brain_data').delete().contains('dataset_sources', [dataset_name]).execute()
+            try:
+                # Note: This requires dataset_sources column to be array type
+                supabase.table('normative_brain_data').delete().contains('dataset_sources', [dataset_name]).execute()
+                print(f"  ✓ Cleared existing records")
+            except Exception as e:
+                print(f"  ⚠️  Could not clear existing records: {str(e)}")
+                print(f"  Will use upsert instead...")
 
-        # Insert new norms in batches
+        # Use upsert to insert or update records
+        # The unique constraint is: (roi_label, age_min, age_max, sex, atlas_name)
         batch_size = 500
         for i in range(0, len(normative_records), batch_size):
             batch = normative_records[i:i + batch_size]
-            supabase.table('normative_brain_data').insert(batch).execute()
+            print(f"  Upserting batch {i//batch_size + 1}/{(len(normative_records)-1)//batch_size + 1}...")
+
+            # Use upsert with on_conflict parameter
+            # This will update existing records instead of failing
+            supabase.table('normative_brain_data').upsert(
+                batch,
+                on_conflict='roi_label,age_min,age_max,sex,atlas_name'
+            ).execute()
 
         print(f"  ✓ Saved {len(normative_records)} records to database")
 

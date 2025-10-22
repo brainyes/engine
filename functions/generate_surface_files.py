@@ -1,16 +1,14 @@
-import inngest
 import os
 import argparse
 import subprocess
 import tempfile
 from datetime import datetime
 
-from utilities.inngest import client as inngest_client
 from utilities.data import supabase
 
 FUNCTION_NAME = "generate_surface_files"
 
-def generate_surface_files(nifti_file_id, freesurfer_output_directory=None, **kwargs):
+def generate_surface_files(nifti_file_id, freesurfer_output_directory=None, subject_id=None, **kwargs):
     """
     Generate ASCII surface files (.asc) from FreeSurfer binary surface files.
 
@@ -29,6 +27,7 @@ def generate_surface_files(nifti_file_id, freesurfer_output_directory=None, **kw
         freesurfer_output_directory (str, optional): Path to local FreeSurfer output directory.
                                                      If provided and exists, uses local files.
                                                      Otherwise downloads from storage.
+        subject_id (str, optional): FreeSurfer subject identifier (for consistency with pipeline)
         **kwargs: Additional parameters
 
     Returns:
@@ -175,18 +174,6 @@ def generate_surface_files(nifti_file_id, freesurfer_output_directory=None, **kw
         }
         print(f"\n❌ Error: {str(e)}")
         return error_result
-
-
-@inngest_client.create_function(
-    fn_id=FUNCTION_NAME,
-    trigger=inngest.TriggerEvent(event=f"{FUNCTION_NAME}_requested"),
-)
-async def fn(ctx: inngest.Context, step: inngest.Step):
-    """Inngest function wrapper for surface file generation"""
-    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-    result = await step.run("generate-surface-files", lambda: generate_surface_files(**parameters))
-
-    return result
 
 
 # Command line interface for scientists

@@ -1,9 +1,7 @@
-import inngest
 import os
 import argparse
 from datetime import datetime
 
-from utilities.inngest import client as inngest_client
 from utilities.data import supabase
 from utilities.freesurfer_parsers import (
     parse_freesurfer_stats_directory,
@@ -214,18 +212,6 @@ def freesurfer_parse_statistics(nifti_file_id, freesurfer_output_directory, subj
         }
         print(f"❌ Statistics parsing failed: {str(e)}")
         return error_result
-
-
-@inngest_client.create_function(
-    fn_id=FUNCTION_NAME,
-    trigger=inngest.TriggerEvent(event=f"{FUNCTION_NAME}_requested"),
-)
-async def fn(ctx: inngest.Context, step: inngest.Step):
-    """Inngest function wrapper for FreeSurfer statistics parsing"""
-    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-    result = await step.run("parse-statistics", lambda: freesurfer_parse_statistics(**parameters))
-    
-    return result
 
 
 # Command line interface

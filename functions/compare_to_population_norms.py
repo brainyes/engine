@@ -24,7 +24,7 @@ from scipy import stats
 
 from utilities.data import supabase
 from utilities.supabase_utilities import get_roi_volumes, get_user_profile
-from utilities.volume_labels import volume_labels_dict
+from utilities.volume_labels import get_region_name
 from utilities.population_utilities import GLOBAL_MEASURE_ROI_LABELS, GLOBAL_MEASURE_DISPLAY_NAMES
 
 FUNCTION_NAME = "compare_to_population_norms"
@@ -33,24 +33,27 @@ FUNCTION_NAME = "compare_to_population_norms"
 def get_normative_data(
     roi_label: int,
     age: int,
-    sex: str = 'U'
+    sex: str = 'U',
+    atlas_name: str = 'hcpex'
 ) -> Optional[Dict]:
     """
-    Get normative data for a specific ROI, age, and sex
+    Get normative data for a specific ROI, age, sex, and atlas
 
     Args:
-        roi_label: Harvard-Oxford atlas label
+        roi_label: Atlas-specific ROI label
         age: Age in years
         sex: 'M' (male), 'F' (female), or 'U' (unknown/combined)
+        atlas_name: Name of the atlas (default: 'hcpex')
 
     Returns:
         Dictionary with normative statistics, or None if not found
     """
 
-    # Try exact match first (age bin + sex)
+    # Try exact match first (age bin + sex + atlas)
     response = supabase.table('normative_brain_data')\
         .select('*')\
         .eq('roi_label', roi_label)\
+        .eq('atlas_name', atlas_name)\
         .lte('age_min', age)\
         .gte('age_max', age)\
         .eq('sex', sex)\
@@ -64,6 +67,7 @@ def get_normative_data(
         response = supabase.table('normative_brain_data')\
             .select('*')\
             .eq('roi_label', roi_label)\
+            .eq('atlas_name', atlas_name)\
             .lte('age_min', age)\
             .gte('age_max', age)\
             .eq('sex', 'U')\
@@ -150,6 +154,7 @@ def compare_to_population_norms(
     nifti_file_id: str,
     age: Optional[int] = None,
     sex: Optional[str] = None,
+    atlas_name: Optional[str] = None,
     outlier_threshold: float = 2.0,
     save_to_db: bool = True,
     include_global_measures: bool = True
@@ -157,10 +162,13 @@ def compare_to_population_norms(
     """
     Compare individual scan ROI volumes and global measures to population norms
 
+    By default, compares ALL available atlases. Pass atlas_name to compare just one (for CLI/testing).
+
     Args:
         nifti_file_id: ID of NIFTI file to compare
         age: Age in years (if None, will fetch from user profile)
         sex: 'M', 'F', or 'U' (if None, will fetch from user profile)
+        atlas_name: Optional - Name of specific atlas (default: None = all atlases)
         outlier_threshold: Z-score threshold for outliers (default: 2.0)
         save_to_db: Save comparison results to database
         include_global_measures: Also compare global brain measures (default: True)
@@ -168,6 +176,28 @@ def compare_to_population_norms(
     Returns:
         Dictionary with comparison results and statistics
     """
+
+    # If no specific atlas requested, process all
+    if atlas_name is None:
+        from utilities.atlas_config import list_atlases
+        all_atlases = list_atlases()
+        results = {}
+
+        print(f"Comparing to population norms for all {len(all_atlases)} atlases: {', '.join(all_atlases.keys())}")
+
+        for atlas_key in all_atlases.keys():
+            print(f"\n--- Comparing with atlas: {atlas_key} ---")
+            results[atlas_key] = compare_to_population_norms(
+                nifti_file_id=nifti_file_id,
+                age=age,
+                sex=sex,
+                atlas_name=atlas_key,  # Recursive call with specific atlas
+                outlier_threshold=outlier_threshold,
+                save_to_db=save_to_db,
+                include_global_measures=include_global_measures
+            )
+
+        return results
 
     # Get user profile if age/sex not explicitly provided
     user_profile = None
@@ -202,14 +232,15 @@ def compare_to_population_norms(
     print(f"COMPARE TO POPULATION NORMS")
     print(f"{'='*70}")
     print(f"NIFTI File ID: {nifti_file_id}")
+    print(f"Atlas: {atlas_name}")
     print(f"Age: {age or 'Unknown'}")
     print(f"Sex: {sex}")
     print(f"Outlier threshold: {outlier_threshold} SD")
     print(f"{'='*70}\n")
 
-    # Get user's ROI volumes
-    print("📊 Fetching user's ROI volumes...")
-    user_volumes = get_roi_volumes(nifti_file_id)
+    # Get user's ROI volumes (filtered by atlas)
+    print(f"📊 Fetching user's ROI volumes ({atlas_name})...")
+    user_volumes = get_roi_volumes(nifti_file_id, atlas_name=atlas_name)
 
     if not user_volumes:
         print("  ❌ No ROI volumes found for this scan")
@@ -248,10 +279,11 @@ def compare_to_population_norms(
     for roi_label, user_volume in user_volumes.items():
         # Convert roi_label to int (handle string floats like '1.0')
         roi_label_int = int(float(roi_label))
-        roi_name = volume_labels_dict.get(roi_label_int, f"ROI_{roi_label_int}")
+        # Use atlas-aware region name lookup
+        roi_name = get_region_name(roi_label_int, atlas_name)
 
         # Get normative data
-        norm_data = get_normative_data(roi_label_int, age, sex)
+        norm_data = get_normative_data(roi_label_int, age, sex, atlas_name)
 
         if norm_data is None:
             norms_missing += 1
@@ -268,6 +300,7 @@ def compare_to_population_norms(
             'nifti_file_id': nifti_file_id,
             'roi_label': roi_label_int,
             'roi_name': roi_name,
+            'atlas_name': atlas_name,
             'user_volume': float(user_volume),
             'norm_mean': float(norm_data['mean']),
             'norm_std': float(norm_data['std']),
@@ -316,7 +349,7 @@ def compare_to_population_norms(
                 display_name = GLOBAL_MEASURE_DISPLAY_NAMES.get(measure_name, measure_name)
 
                 # Get normative data for this global measure
-                norm_data = get_normative_data(roi_label, age, sex)
+                norm_data = get_normative_data(roi_label, age, sex, atlas_name)
 
                 if norm_data is None:
                     global_measures_missing += 1
@@ -333,6 +366,7 @@ def compare_to_population_norms(
                     'nifti_file_id': nifti_file_id,
                     'roi_label': roi_label,
                     'roi_name': display_name,
+                    'atlas_name': atlas_name,
                     'user_volume': float(user_value),
                     'norm_mean': float(norm_data['mean']),
                     'norm_std': float(norm_data['std']),
@@ -365,10 +399,11 @@ def compare_to_population_norms(
     if save_to_db and len(comparisons) > 0:
         print(f"\n💾 Saving {len(comparisons)} comparisons to database...")
 
-        # Delete existing comparisons for this scan
+        # Delete existing comparisons for this scan and atlas
         supabase.table('population_comparisons')\
             .delete()\
             .eq('nifti_file_id', nifti_file_id)\
+            .eq('atlas_name', atlas_name)\
             .execute()
 
         # Insert new comparisons in batches
@@ -531,26 +566,33 @@ Interpretation:
     args = parser.parse_args()
 
     try:
+        # Always compare against all atlases (atlas_name=None)
         result = compare_to_population_norms(
             nifti_file_id=args.file_id,
             age=args.age,
             sex=args.sex,
+            atlas_name=None,  # Process all atlases
             outlier_threshold=args.threshold,
             save_to_db=not args.no_save,
             include_global_measures=not args.no_global_measures
         )
 
-        if result['total_rois'] == 0:
-            print("\n⚠️  No comparisons could be made.")
+        # Aggregate results from all atlases
+        total_rois = sum(r.get('total_rois', 0) for r in result.values())
+        total_outliers = sum(r.get('outliers_count', 0) for r in result.values())
+
+        if total_rois == 0:
+            print("\n⚠️  No comparisons could be made across any atlas.")
             print("   Check that:")
             print("   1. The scan has ROI volumes calculated")
             print("   2. Population norms exist for this age/sex")
             os._exit(1)
 
-        print("\n✅ Comparison complete!")
+        print("\n✅ Comparison complete across all atlases!")
+        print(f"   Total ROIs compared: {total_rois}")
 
-        if result['outliers_count'] > 0:
-            print(f"\n⚠️  Found {result['outliers_count']} outlier ROIs - see details above")
+        if total_outliers > 0:
+            print(f"\n⚠️  Found {total_outliers} outlier ROIs total - see details above")
 
     except Exception as e:
         print(f"\n❌ Error during comparison: {str(e)}")

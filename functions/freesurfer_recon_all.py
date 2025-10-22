@@ -1,4 +1,3 @@
-import inngest
 import os
 import argparse
 import subprocess
@@ -8,7 +7,6 @@ import multiprocessing
 import psutil
 from datetime import datetime
 
-from utilities.inngest import client as inngest_client
 from utilities.supabase_utilities import download_nifti_file, get_nifti_file
 
 FUNCTION_NAME = "freesurfer_recon_all"
@@ -155,18 +153,6 @@ def freesurfer_recon_all(nifti_file_id, **kwargs):
         }
         print(f"❌ FreeSurfer processing failed: {str(e)}")
         return error_result
-
-
-@inngest_client.create_function(
-    fn_id=FUNCTION_NAME,
-    trigger=inngest.TriggerEvent(event=f"{FUNCTION_NAME}_requested"),
-)
-async def fn(ctx: inngest.Context, step: inngest.Step):
-    """Inngest function wrapper for FreeSurfer workflow automation"""
-    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-    result = await step.run("execute-freesurfer", lambda: freesurfer_recon_all(**parameters))
-    
-    return result
 
 
 # Command line interface

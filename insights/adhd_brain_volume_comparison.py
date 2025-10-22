@@ -1,9 +1,7 @@
-import inngest
 import pandas as pd
 import numpy as np
 from datetime import datetime
 
-from utilities.inngest import client as inngest_client
 from utilities.supabase_utilities import get_nifti_file, get_roi_volumes, get_user_insight, save_insight_output, save_insight_type
 
 # Hoogman et al. 2017 - Subcortical brain volume differences in participants with attention deficit hyperactivity disorder
@@ -178,16 +176,6 @@ def main(**parameters):
     
     ########## PAPER ENDS ##########
     return insight
-
-
-@inngest_client.create_function(
-    fn_id="insights/" + INSIGHT_NAME,
-    trigger=inngest.TriggerEvent(event=INSIGHT_NAME),
-)
-async def fn(ctx: inngest.Context, step: inngest.Step):
-    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-    return main(**parameters)
-
 
 # example:
 if __name__ == "__main__":

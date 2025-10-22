@@ -1,8 +1,6 @@
-import inngest
 import os
 import argparse
 
-from utilities.inngest import client as inngest_client
 from utilities.data import supabase
 from utilities.supabase_utilities import download_nifti_file, get_nifti_file  # Common utility
 
@@ -61,23 +59,6 @@ def my_new_function(nifti_file_id, **kwargs):
     ########## YOUR FUNCTION LOGIC ENDS ##########
     
     print(f"Function completed for file: {nifti_file_id}")
-    return result
-
-
-@inngest_client.create_function(
-    fn_id=FUNCTION_NAME,
-    trigger=inngest.TriggerEvent(event=f"{FUNCTION_NAME}_requested"),
-)
-async def fn(ctx: inngest.Context, step: inngest.Step):
-    """Inngest function wrapper for workflow automation"""
-    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-    result = await step.run("execute-function", lambda: my_new_function(**parameters))
-    
-    # TODO: Optionally trigger next step in pipeline
-    # await inngest_client.send(
-    #     inngest.Event(name="next_function_requested", data={"nifti_file_id": parameters["nifti_file_id"]})
-    # )
-    
     return result
 
 

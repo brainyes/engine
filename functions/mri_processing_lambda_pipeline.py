@@ -192,8 +192,7 @@ def mri_processing_pipeline(nifti_file_id, user_id=None, **kwargs):
         results['visualization'] = call_lambda_sync(
             'generate_visualization_data',
             {
-                'nifti_file_id': nifti_file_id,
-                'parcellation': 'custom_regions_de_ki'
+                'nifti_file_id': nifti_file_id
             }
         )
         results['steps_completed'].append('visualization_data')
@@ -252,7 +251,7 @@ if __name__ == "__main__":
     print("4. Store FreeSurfer files (~1 min)")
     print("5. Generate surface files (.asc) (~1 min)")
     print("6. Parse statistics (~30s)")
-    print("7. Generate visualization data (custom_regions_de_ki) (~30s)")
+    print("7. Generate visualization data (aparc) (~30s)")
     print("8. Calculate memory metrics (~30s)")
     print("\nTotal expected time: 4-8 hours")
     print("All steps will be tracked as separate tasks in the dashboard\n")

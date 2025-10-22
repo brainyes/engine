@@ -1,10 +1,8 @@
-import inngest
 import os
 
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-from utilities.inngest import client as inngest_client
 
 from functions.calculate_roi_volumes import calculate_roi_volumes
 from utilities.options import silent_run, dataset_dir, output_dir, oasis_bids_tsv_path
@@ -210,15 +208,6 @@ def main():
     save_insight_output_file(user_insight['id'], 'rois_correlated_with_mms.png', plot_to_image())
     if not silent_run:
         plt.show()
-
-
-@inngest_client.create_function(
-    fn_id="insights/paper-1-oasis",
-    trigger=inngest.TriggerEvent(event="calculated_roi_volumes"),
-)
-async def fn(ctx: inngest.Context, step: inngest.Step):
-    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-    return main(**parameters)
 
 # example:
 if __name__=="__main__":

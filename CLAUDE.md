@@ -6,11 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Running the Application
 ```bash
-# Start the FastAPI server with Inngest orchestration
-INNGEST_DEV=1 uvicorn server:app --reload
-
-# Start the Inngest orchestrator (in separate terminal)
-npx inngest-cli@latest dev -u http://127.0.0.1:8000/api/inngest --no-discovery
+# Start the FastAPI server
+uvicorn server:app --reload
 ```
 
 ### Python Environment
@@ -96,17 +93,16 @@ See `docs/DATABASE_SCHEMA_POPULATION_NORMS.md` for database setup.
 **1. Function-Based Processing Pipeline**
 - `functions/` - Individual neuroimaging processing functions
 - Each function follows template pattern (`functions/template.py`)
-- Functions can run standalone via CLI or through Inngest orchestration
+- Functions can run standalone via CLI
 - All functions use standardized utilities for database and file operations
 
-
-**3. Data Management**
+**2. Data Management**
 - `utilities/data.py` - Supabase database connection
 - `utilities/supabase_utilities.py` - File upload/download helpers
 - `research/input/` - Reference datasets and atlases
 - Database stores processing results and metadata
 
-**4. Neuroimaging Analysis**
+**3. Neuroimaging Analysis**
 - `insights/` - Research analysis and scientific insights
 - `utilities/freesurfer_parsers.py` - FreeSurfer output parsing
 - `utilities/volume_labels.py` - Brain region label mappings
@@ -120,22 +116,21 @@ All processing functions follow this structure:
 3. **Processing logic** - Core neuroimaging analysis
 4. **Database storage** - Save results to Supabase
 5. **CLI interface** - Argparse for scientist-friendly command line
-6. **Inngest integration** - Async wrapper for workflow automation
 
 ### Key Dependencies
 - **FastAPI** - Web framework for API endpoints
-- **Inngest** - Workflow orchestration and event handling
 - **Supabase** - Database and file storage
 - **nibabel** - NIFTI file handling
 - **numpy/scipy** - Numerical processing for brain imaging
 - **matplotlib/seaborn** - Visualization and plotting
 
 ### Data Flow
-1. Scientists upload NIFTI files via `upload_nifti` function
-2. Atlas resampling aligns reference brain regions to user data
-3. ROI volume calculation extracts quantitative measurements
-4. Results stored in database with file ID relationships
-5. Insights and analysis functions process results for research
+1. Scientists upload NIFTI files via `upload_nifti` function or web interface
+2. Functions can be called individually via CLI for processing steps:
+   - Atlas resampling aligns reference brain regions to user data
+   - ROI volume calculation extracts quantitative measurements
+3. Results stored in database with file ID relationships
+4. Insights and analysis functions process results for research
 
 ### File Organization
 - `functions/` - Processing pipeline components
@@ -146,9 +141,9 @@ All processing functions follow this structure:
 
 ### Integration Points
 - All functions use shared Supabase utilities for consistency
-- Inngest events enable automated multi-step processing
 - Template-based development ensures standardized function structure
-- CLI interfaces allow scientists to run individual steps manually
+- CLI interfaces allow scientists to run individual processing steps
+- Functions can be orchestrated via web API or called directly
 
 ---
 
@@ -398,4 +393,4 @@ Commented out stages:
 
 ---
 
-*Last Updated: 2025-10-10 - Population Norms System Implementation*
+*Last Updated: 2025-10-14 - Removed Inngest orchestration dependencies*

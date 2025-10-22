@@ -134,7 +134,7 @@ freesurfer-outputs/
 
 ## 🔄 Processing Pipeline Integration
 
-1. **Execute FreeSurfer** - Run `recon-all` via Inngest (6+ hours)
+1. **Execute FreeSurfer** - Run `recon-all` function (6+ hours)
 2. **Parse Statistics** - Extract measurements to database tables
 3. **Store Binary Data** - Upload essential/complete packages to object storage
 4. **Index & Catalog** - Create file inventory and metadata

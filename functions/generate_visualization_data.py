@@ -1,17 +1,15 @@
-import inngest
 import os
 import argparse
 import json
 import tempfile
 from datetime import datetime
 
-from utilities.inngest import client as inngest_client
 from utilities.data import supabase
 from utilities.freesurfer_parsers import parse_annot_file
 
 FUNCTION_NAME = "generate_visualization_data"
 
-def generate_visualization_data(nifti_file_id, parcellation="custom_regions_de_ki", **kwargs):
+def generate_visualization_data(nifti_file_id, parcellation="aparc", **kwargs):
     """
     Generate visualization data (JSON files) for frontend from FreeSurfer outputs.
 
@@ -28,7 +26,7 @@ def generate_visualization_data(nifti_file_id, parcellation="custom_regions_de_k
 
     Args:
         nifti_file_id (str): The ID of the NIFTI file whose FreeSurfer outputs to process
-        parcellation (str): Parcellation type (default: "custom_regions_de_ki").
+        parcellation (str): Parcellation type (default: "aparc" - Desikan-Killiany atlas).
                            Standard: "aparc", "aparc.DKTatlas", "aparc.a2009s"
                            Custom: "custom_regions_de_ki", "custom_regions", "mpm.vpnl", etc.
         **kwargs: Additional parameters
@@ -157,18 +155,6 @@ def generate_visualization_data(nifti_file_id, parcellation="custom_regions_de_k
         return error_result
 
 
-@inngest_client.create_function(
-    fn_id=FUNCTION_NAME,
-    trigger=inngest.TriggerEvent(event=f"{FUNCTION_NAME}_requested"),
-)
-async def fn(ctx: inngest.Context, step: inngest.Step):
-    """Inngest function wrapper for workflow automation"""
-    parameters = {k: v for k, v in ctx.event.data.items() if not k.startswith('_')}
-    result = await step.run("generate-visualization-data", lambda: generate_visualization_data(**parameters))
-
-    return result
-
-
 # Command line interface for scientists
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -177,9 +163,9 @@ if __name__ == "__main__":
     parser.add_argument('file_id', help='NIFTI file ID whose FreeSurfer outputs to process')
     parser.add_argument(
         '--parcellation',
-        default='custom_regions_de_ki',
+        default='aparc',
         help='FreeSurfer parcellation type. Standard: aparc, aparc.DKTatlas, aparc.a2009s. '
-             'Custom: custom_regions_de_ki, custom_regions, mpm.vpnl, etc. (default: custom_regions_de_ki)'
+             'Custom: custom_regions_de_ki, custom_regions, mpm.vpnl, etc. (default: aparc)'
     )
 
     args = parser.parse_args()

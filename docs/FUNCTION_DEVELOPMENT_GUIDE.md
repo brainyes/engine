@@ -73,15 +73,7 @@ Analyzes data quality and generates reports
 
 ## Pipeline Integration
 
-Your function can be part of automated workflows:
-
-```python
-# In your Inngest function, trigger the next step:
-await inngest_client.send(
-    inngest.Event(name="next_function_requested", 
-                  data={"nifti_file_id": parameters["nifti_file_id"]})
-)
-```
+Your function can be called from other functions or via the web API for automated workflows. Functions can be orchestrated by calling them directly from other Python code or triggered via web API endpoints.
 
 ## Example Function Names
 
