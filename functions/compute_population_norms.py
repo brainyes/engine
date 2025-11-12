@@ -22,13 +22,22 @@ import os
 import argparse
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 
 from utilities.data import supabase
 from utilities.volume_labels import get_region_name  # For structure_name field
 
 FUNCTION_NAME = "compute_population_norms"
+
+# Try to import scikit-learn for regression models (v2)
+try:
+    from sklearn.linear_model import LinearRegression
+    from sklearn.metrics import r2_score
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    print("⚠️  scikit-learn not available, using simple stratification only (v1)")
 
 
 def get_population_scans(dataset_name: str = None, min_age: int = None, max_age: int = None) -> pd.DataFrame:
@@ -185,21 +194,95 @@ def compute_statistics(values: np.ndarray) -> Dict:
     }
 
 
+def fit_icv_regression_model(df: pd.DataFrame) -> Optional[Dict]:
+    """
+    Fit regression model: volume ~ age + age² + sex + ICV
+
+    This accounts for the fact that larger brains (higher ICV) have
+    larger regional volumes. The residuals from this model represent
+    anatomical variation independent of overall brain size.
+
+    Args:
+        df: DataFrame with columns: volume, age, sex, icv
+
+    Returns:
+        Dictionary with:
+        - coefficients: Model coefficients
+        - residual_std: Standard deviation of residuals
+        - r_squared: Proportion of variance explained
+        - None if insufficient data or sklearn not available
+    """
+    if not SKLEARN_AVAILABLE:
+        return None
+
+    # Filter out rows without ICV
+    df_with_icv = df.dropna(subset=['icv'])
+
+    if len(df_with_icv) < 10:  # Need minimum data for regression
+        return None
+
+    # Build design matrix
+    X = pd.DataFrame({
+        'age': df_with_icv['age'],
+        'age_squared': df_with_icv['age'] ** 2,
+        'sex_M': (df_with_icv['sex'] == 'M').astype(int),
+        'sex_F': (df_with_icv['sex'] == 'F').astype(int),
+        'icv': df_with_icv['icv']
+    })
+
+    y = df_with_icv['volume'].values
+
+    # Fit model
+    model = LinearRegression()
+    model.fit(X, y)
+
+    # Get predictions and residuals
+    y_pred = model.predict(X)
+    residuals = y - y_pred
+    residual_std = np.std(residuals, ddof=X.shape[1])  # Adjust for DOF
+
+    # R-squared
+    r_squared = r2_score(y, y_pred)
+
+    # Package coefficients
+    coefficients = {
+        'intercept': float(model.intercept_),
+        'age': float(model.coef_[0]),
+        'age_squared': float(model.coef_[1]),
+        'sex_M': float(model.coef_[2]),
+        'sex_F': float(model.coef_[3]),
+        'icv': float(model.coef_[4])
+    }
+
+    return {
+        'coefficients': coefficients,
+        'residual_std': float(residual_std),
+        'r_squared': float(r_squared),
+        'sample_size': len(df_with_icv),
+        'icv_mean': float(df_with_icv['icv'].mean()),
+        'icv_std': float(df_with_icv['icv'].std())
+    }
+
+
 def compute_population_norms(
     dataset_name: str = None,
     min_samples: int = 30,
     age_bin_width: int = 10,
     compute_combined_sex: bool = True,
+    use_icv_regression: bool = True,
     dry_run: bool = False
 ) -> Dict:
     """
     Compute population normative data from processed scans
+
+    Computes both v1 (simple stratification) and v2 (ICV-adjusted regression) models.
 
     Args:
         dataset_name: Filter by specific dataset (None = all datasets)
         min_samples: Minimum sample size to compute norms for a stratum
         age_bin_width: Width of age bins in years (default: 10)
         compute_combined_sex: Also compute sex-agnostic norms (sex='U')
+        use_icv_regression: Attempt ICV-adjusted regression models (v2) if data available
         dry_run: If True, compute but don't save to database
 
     Returns:
@@ -315,6 +398,22 @@ def compute_population_norms(
                         stats = compute_statistics(volumes)
 
                         if stats:
+                            # Try ICV-adjusted regression if requested
+                            model_version = 'v1_simple'
+                            model_coefficients = None
+                            residual_std = None
+
+                            if use_icv_regression and SKLEARN_AVAILABLE:
+                                # Build dataframe for regression
+                                regression_df = sex_data[['volume', 'age', 'sex', 'icv']].copy()
+                                regression_model = fit_icv_regression_model(regression_df)
+
+                                if regression_model and regression_model['r_squared'] > 0.1:
+                                    # Use regression model if it explains >10% variance
+                                    model_version = 'v2_icv_adjusted'
+                                    model_coefficients = regression_model['coefficients']
+                                    residual_std = regression_model['residual_std']
+
                             record = {
                                 'structure_name': structure_name,  # Redundant but required by DB
                                 'roi_label': roi_label_int,
@@ -333,7 +432,10 @@ def compute_population_norms(
                                 'dataset_sources': list(datasets),
                                 'computed_at': datetime.now().isoformat(),
                                 'unit': 'mm³',
-                                'source': f'Computed from {len(scans_df)} scans across {len(datasets)} dataset(s)'
+                                'source': f'Computed from {len(scans_df)} scans across {len(datasets)} dataset(s)',
+                                'model_version': model_version,
+                                'model_coefficients': model_coefficients,
+                                'residual_std': residual_std
                             }
 
                             normative_records.append(record)
@@ -350,6 +452,20 @@ def compute_population_norms(
                         stats = compute_statistics(volumes)
 
                         if stats:
+                            # Try ICV-adjusted regression if requested
+                            model_version = 'v1_simple'
+                            model_coefficients = None
+                            residual_std = None
+
+                            if use_icv_regression and SKLEARN_AVAILABLE:
+                                regression_df = combined_data[['volume', 'age', 'sex', 'icv']].copy()
+                                regression_model = fit_icv_regression_model(regression_df)
+
+                                if regression_model and regression_model['r_squared'] > 0.1:
+                                    model_version = 'v2_icv_adjusted'
+                                    model_coefficients = regression_model['coefficients']
+                                    residual_std = regression_model['residual_std']
+
                             record = {
                                 'structure_name': structure_name,  # Redundant but required by DB
                                 'roi_label': roi_label_int,
@@ -368,7 +484,10 @@ def compute_population_norms(
                                 'dataset_sources': list(datasets),
                                 'computed_at': datetime.now().isoformat(),
                                 'unit': 'mm³',
-                                'source': f'Computed from {len(scans_df)} scans across {len(datasets)} dataset(s)'
+                                'source': f'Computed from {len(scans_df)} scans across {len(datasets)} dataset(s)',
+                                'model_version': model_version,
+                                'model_coefficients': model_coefficients,
+                                'residual_std': residual_std
                             }
 
                             normative_records.append(record)

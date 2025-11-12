@@ -54,34 +54,65 @@ The test suite uses pre-existing data:
 
 See `tests/README.md` for more details.
 
-### Population Norms System
+### Population Norms System (Pipeline v2 - Registration-Based)
+
+**IMPORTANT**: As of 2025-10-23, the pipeline uses proper registration for accurate measurements.
+
 ```bash
+# Check dependencies first
+python -m utilities.dependency_checker
+
 # Download population dataset metadata
 python -m functions.download_oasis_dataset --dataset oasis-1 --count 100
 
-# Batch process population scans
+# NEW: Batch process population scans with v2 pipeline
+# (includes preprocessing, registration, atlas warping, and volume calculation)
 python -m functions.batch_process_population_dataset \
     research/input/datasets/oasis-1/raw \
     --dataset oasis-1 \
     --metadata research/input/datasets/oasis-1/selected_subjects.csv
 
-# Compute population norms from processed scans
+# Or run steps individually:
+python -m functions.preprocess_native_scan FILE_ID              # N4 + skull-strip + ICV
+python -m functions.register_to_template FILE_ID                # ANTs registration
+python -m functions.resample_atlas_for_user_nifti FILE_ID --population-mode  # Atlas warping
+python -m functions.calculate_roi_volumes FILE_ID               # Volume measurement
+
+# Compute population norms (with ICV-adjusted regression)
 python -m functions.compute_population_norms --dataset oasis-1 --min-samples 30
 
 # Compare individual scan to population norms
 python -m functions.compare_to_population_norms FILE_ID --age 45 --sex M
 ```
 
-**Workflow Overview**:
+**Workflow Overview (v2)**:
 1. **Download**: Get dataset metadata and subject lists
-2. **Process**: Batch upload and analyze population scans
-3. **Compute**: Calculate statistical norms (mean, std, percentiles)
-4. **Compare**: Match individual scans to age/sex-stratified norms
+2. **Preprocess**: N4 bias correction + skull-stripping + ICV computation
+3. **Register**: Nonlinear registration to template (OASIS for OASIS datasets, MNI152 for others)
+4. **Process**: Warp atlas to native space + calculate volumes
+5. **Compute**: Calculate ICV-adjusted statistical norms using regression models
+6. **Compare**: Match individual scans to age/sex/ICV-stratified norms
+
+**NEW: OASIS Template Support** (as of 2025-10-24):
+- Batch processor **automatically uses OASIS template** for OASIS datasets
+- Pre-built template from ANTs (age-matched, research-grade quality)
+- Better accuracy than generic MNI152 for population norms
+- See `docs/OASIS_TEMPLATE_SETUP.md` for details
+
+**Critical Changes from v1**:
+- ❌ **v1 (WRONG)**: Geometric atlas resampling → meaningless volumes
+- ✅ **v2 (CORRECT)**: Proper registration + inverse warp → accurate anatomy
 
 **Database Tables Required**:
-- `population_scans` - Metadata for population scans (age, sex, dataset source)
-- `normative_brain_data` - Computed norms (mean, std, percentiles by age/sex)
+- `population_scans` - Metadata for population scans (age, sex, ICV, registration method)
+- `normative_brain_data` - Computed norms (mean, std, percentiles, regression models)
 - `population_comparisons` - Individual comparison results (z-scores, percentiles)
+
+**Database Migration**:
+```bash
+# Run migration to add v2 fields
+psql -h your-host -U postgres -d postgres -f migrations/002_population_v2_registration.sql
+```
 
 See `docs/POPULATION_NORMS_GUIDE.md` for detailed instructions.
 See `docs/DATABASE_SCHEMA_POPULATION_NORMS.md` for database setup.
@@ -394,3 +425,4 @@ Commented out stages:
 ---
 
 *Last Updated: 2025-10-14 - Removed Inngest orchestration dependencies*
+- supabase database migrations are kept in `app` app directory, not in `engine`.

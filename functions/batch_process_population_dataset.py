@@ -1,35 +1,41 @@
 """
-Batch Process Population Dataset for Normative Data
+Batch Process Population Dataset for Normative Data (Pipeline v2)
 
 This function batch-processes downloaded brain MRI datasets to build population
 normative data. It uploads scans, runs the processing pipeline, and stores
 metadata for later statistical analysis.
 
-Processing pipeline for each scan:
+Processing pipeline v2 for each scan:
 1. Upload NIFTI file to system
-2. Resample Harvard-Oxford atlas to scan space
-3. Calculate ROI volumes
-4. Store population metadata (age, sex, dataset source, etc.)
+2. **NEW** Preprocess: N4 bias correction + skull-stripping + ICV computation
+3. **NEW** Register: Nonlinear registration to MNI152 template (ANTs or affine fallback)
+4. Resample atlas: Use inverse warp to bring atlas from MNI → native space
+5. Calculate ROI volumes: Measure in native space (where anatomy is)
+6. Store population metadata (age, sex, ICV, dataset source, etc.)
+
+Changes from v1:
+- v1 used geometric atlas resampling (WRONG - no anatomical correspondence)
+- v2 uses proper registration + inverse warp (CORRECT - anatomically aligned)
 
 The processed data is used by compute_population_norms.py to generate
-statistical norms (mean, std, percentiles) for comparison with individual scans.
+statistical norms (mean, std, percentiles, ICV-adjusted models) for comparison
+with individual scans.
 """
 
+import glob
 import os
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
+from typing import List, Dict, Optional
+
 import argparse
 import pandas as pd
-import glob
-import time
 import traceback
-from pathlib import Path
-from typing import List, Dict, Optional
-from datetime import datetime
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import multiprocessing
 
-from functions.upload_nifti import upload_nifti
-from functions.resample_atlas_for_user_nifti import resample_atlas_for_user_nifti
 from functions.calculate_roi_volumes import calculate_roi_volumes
+from functions.resample_atlas_for_user_nifti import resample_atlas_for_user_nifti
+from functions.upload_nifti import upload_nifti
 from utilities.data import supabase
 
 FUNCTION_NAME = "batch_process_population_dataset"
@@ -44,9 +50,9 @@ def find_nifti_files(directory: str, recursive: bool = True) -> List[str]:
         recursive: Search subdirectories
 
     Returns:
-        List of NIFTI file paths
+        List of NIFTI file paths (including converted ANALYZE files)
     """
-    patterns = ['*.nii.gz', '*.nii']
+    patterns = ['*.nii.gz', '*.nii', '*.hdr']  # Add ANALYZE format
     files = []
 
     for pattern in patterns:
@@ -60,25 +66,142 @@ def find_nifti_files(directory: str, recursive: bool = True) -> List[str]:
     return sorted(list(set(files)))  # Remove duplicates
 
 
+def is_normalized_scan(filepath: str) -> bool:
+    """
+    Detect if scan is already normalized to atlas space OR is a segmentation/mask
+
+    Checks filename patterns for:
+    - Normalization: t88, tal (Talairach), mni (MNI space)
+    - Segmentations: fseg, seg, mask, label
+    - Post-processing: gfc (gradient field corrected), masked
+
+    NOTE: N4-corrected scans are ACCEPTED (will skip N4 step but continue with registration)
+
+    Args:
+        filepath: Path to scan file
+
+    Returns:
+        True if scan should be skipped (normalized or segmentation)
+    """
+    filename = os.path.basename(filepath).lower()
+
+    # Check for normalization indicators FIRST (highest priority)
+    # Even if file has _sbj, if it has t88/mni/tal it's normalized
+    normalized_patterns = ['t88', 'tal', 'mni', 'normalized']
+    for pattern in normalized_patterns:
+        if pattern in filename:
+            return True  # Normalized = skip
+
+    # Check for segmentation/mask files (not raw scans)
+    segmentation_patterns = ['fseg', '_seg', 'mask', 'label', 'parcellation', 'gfc']
+    for pattern in segmentation_patterns:
+        if pattern in filename:
+            return True  # Segmentation = skip
+
+    # Check for native space indicators (these are good - explicit check for usability)
+    native_patterns = ['_sbj', '_native', '_subj', '_mpr']
+    for pattern in native_patterns:
+        if pattern in filename:
+            # Double-check no normalization markers (defensive)
+            for norm_pattern in normalized_patterns:
+                if norm_pattern in filename:
+                    return True  # Normalized wins over native marker
+            return False  # Native space = usable
+
+    return False
+
+
+def is_n4_corrected(filepath: str) -> bool:
+    """
+    Detect if scan has already been N4 bias-corrected
+
+    Args:
+        filepath: Path to scan file
+
+    Returns:
+        True if N4 correction already applied
+    """
+    filename = os.path.basename(filepath).lower()
+    return '_n4_' in filename or 'mpr_n4' in filename
+
+
+def convert_analyze_to_nifti(hdr_path: str) -> str:
+    """
+    Convert ANALYZE format (.hdr/.img) to NIFTI (.nii.gz)
+
+    Args:
+        hdr_path: Path to .hdr file
+
+    Returns:
+        Path to converted NIFTI file
+    """
+    import tempfile
+    import nibabel as nib
+
+    # Load ANALYZE image
+    img = nib.load(hdr_path)
+
+    # Create temp NIFTI path
+    temp_dir = tempfile.gettempdir()
+    basename = os.path.basename(hdr_path).replace('.hdr', '')
+    nifti_path = os.path.join(temp_dir, f"{basename}.nii.gz")
+
+    # Save as NIFTI
+    nib.save(img, nifti_path)
+
+    return nifti_path
+
+
+def get_base_subject_id(subject_id: str) -> str:
+    """
+    Get base subject ID for metadata matching (removes scan-specific suffixes)
+
+    Examples:
+    - OAS1_0102_MR1_mpr-1 -> OAS1_0102_MR1
+    - OAS1_0102_MR1_sbj -> OAS1_0102_MR1
+    - OAS1_0102_MR1 -> OAS1_0102_MR1
+
+    Args:
+        subject_id: Full subject ID (potentially with scan suffix)
+
+    Returns:
+        Base subject ID (for metadata matching)
+    """
+    # Remove scan-specific suffixes
+    if '_mpr-' in subject_id:
+        # OAS1_0102_MR1_mpr-1 -> OAS1_0102_MR1
+        return subject_id.rsplit('_mpr-', 1)[0]
+    elif subject_id.endswith('_sbj'):
+        # OAS1_0102_MR1_sbj -> OAS1_0102_MR1
+        return subject_id.rsplit('_sbj', 1)[0]
+    elif subject_id.endswith('_n4'):
+        # OAS1_0102_MR1_n4 -> OAS1_0102_MR1
+        return subject_id.rsplit('_n4', 1)[0]
+
+    # Already a base ID
+    return subject_id
+
+
 def extract_subject_id_from_filename(filepath: str) -> str:
     """
     Extract subject ID from NIFTI filename
 
     Handles common patterns:
     - sub-OASIS10001_ses-M00_T1w.nii.gz -> OASIS10001
-r    - OAS1_0001_MR1_mpr-1_anon.nii.gz -> OAS1_0001_MR1
+    - OAS1_0001_MR1_mpr-1_anon.nii.gz -> OAS1_0001_MR1_mpr-1 (includes scan number)
+    - OAS1_0001_MR1_mpr_n4_anon_sbj_111.hdr -> OAS1_0001_MR1_sbj (processed version)
     - subject_123.nii -> subject_123
 
     Args:
         filepath: Path to NIFTI file
 
     Returns:
-        Subject ID string
+        Subject ID string (unique per scan, not per subject)
     """
     filename = os.path.basename(filepath)
 
     # Remove extensions
-    filename = filename.replace('.nii.gz', '').replace('.nii', '')
+    filename = filename.replace('.nii.gz', '').replace('.nii', '').replace('.hdr', '')
 
     # Handle BIDS format: sub-XXXXX_...
     if filename.startswith('sub-'):
@@ -86,16 +209,40 @@ r    - OAS1_0001_MR1_mpr-1_anon.nii.gz -> OAS1_0001_MR1
         return parts[0].replace('sub-', '')
 
     # Handle OASIS-1 format: OAS1_XXXX_MRX_...
-    # Preserve the full subject ID including session number (MR1, MR2, etc.)
+    # Need to differentiate between multiple scans of same subject
     if filename.startswith('OAS'):
         parts = filename.split('_')
-        # Return first 3 parts: OAS1_0001_MR1
+
+        # Base ID: OAS1_0001_MR1
         if len(parts) >= 3:
-            return '_'.join(parts[:3])
+            base_id = '_'.join(parts[:3])
         elif len(parts) >= 2:
-            return '_'.join(parts[:2])
+            base_id = '_'.join(parts[:2])
         else:
-            return parts[0]
+            base_id = parts[0]
+
+        # Add scan-specific suffix to differentiate multiple scans
+        # Examples:
+        # - OAS1_0001_MR1_mpr-1_anon -> "OAS1_0001_MR1_mpr-1"
+        # - OAS1_0001_MR1_mpr-2_anon -> "OAS1_0001_MR1_mpr-2"
+        # - OAS1_0001_MR1_mpr_n4_anon_sbj_111 -> "OAS1_0001_MR1_sbj" (processed/averaged)
+
+        # Check the entire filename for patterns (not just parts[3])
+        if len(parts) >= 4:
+            # Look for raw scan pattern: mpr-1, mpr-2, mpr-3, mpr-4
+            # These use hyphen, not underscore
+            for part in parts:
+                if part.startswith('mpr-'):
+                    # Raw scan: mpr-1, mpr-2, etc
+                    return f"{base_id}_{part}"
+
+            # Look for processed scan indicator (sbj = subject-averaged)
+            if 'sbj' in parts:
+                # Processed/averaged scan: mpr_n4_anon_sbj_111
+                return f"{base_id}_sbj"
+
+        # If no specific scan identifier found, return base ID
+        return base_id
 
     # Default: use entire filename
     return filename
@@ -142,28 +289,56 @@ def load_metadata_from_csv(metadata_path: str) -> pd.DataFrame:
     return df
 
 
-def check_if_scan_exists(dataset_source: str, subject_id: str) -> bool:
+def check_if_scan_exists(dataset_source: str, subject_id: str) -> tuple:
     """
-    Check if a scan already exists in the population_scans table
+    Check if a scan already exists in the population_scans table and get its version
 
     Args:
         dataset_source: Source dataset (e.g., 'oasis-1')
         subject_id: Original subject ID from dataset
 
     Returns:
-        True if scan exists, False otherwise
+        Tuple of (exists: bool, preprocessing_version: str or None)
     """
     try:
         response = supabase.table('population_scans')\
-            .select('id')\
+            .select('id, preprocessing_version')\
             .eq('subject_id', subject_id)\
             .eq('dataset_source', dataset_source)\
             .execute()
 
-        return response.data and len(response.data) > 0
+        if response.data and len(response.data) > 0:
+            version = response.data[0].get('preprocessing_version', 'v1_none')
+            return True, version
+        return False, None
     except Exception as e:
         # If check fails, assume doesn't exist to be safe
-        return False
+        return False, None
+
+
+def should_reprocess_scan(preprocessing_version: str) -> bool:
+    """
+    Determine if a scan should be reprocessed based on its version
+
+    v1 scans (v1_none) should be reprocessed with v2 pipeline
+    v2 scans (v2_*) should be skipped
+
+    Args:
+        preprocessing_version: Version string from database
+
+    Returns:
+        True if scan should be reprocessed
+    """
+    if not preprocessing_version:
+        return True  # No version = needs processing
+
+    if preprocessing_version.startswith('v1'):
+        return True  # v1 scans need upgrading to v2
+
+    if preprocessing_version.startswith('v2'):
+        return False  # v2 scans are already processed correctly
+
+    return True  # Unknown version = reprocess to be safe
 
 
 def process_single_scan(
@@ -195,32 +370,75 @@ def process_single_scan(
     }
 
     try:
-        # Check if already processed
-        if skip_existing and check_if_scan_exists(dataset_name, subject_id):
+        # Check if scan is already normalized (skip if so)
+        if is_normalized_scan(filepath):
             result['status'] = 'skipped'
+            result['error'] = 'Scan appears to be already normalized (t88/mni) - need native space scan'
+            print(f"  ⚠️  Skipping {subject_id}: Already normalized to atlas space")
             return result
 
-        # Upload NIFTI file
-        nifti_file, nifti_file_zipped = upload_nifti(
-            filepath,
-            user_id=None,
-            public_id=f"population-{dataset_name}-{subject_id}"
-        )
-        nifti_file_id = nifti_file['id']
-        result['nifti_file_id'] = nifti_file_id
+        # Convert ANALYZE to NIFTI if needed
+        working_filepath = filepath
+        if filepath.endswith('.hdr'):
+            print(f"  🔄 Converting ANALYZE to NIFTI: {subject_id}")
+            working_filepath = convert_analyze_to_nifti(filepath)
+            result['converted'] = True
 
-        # Resample atlas (population mode: skip FreeSurfer, use MNI atlases only)
-        atlas_result = resample_atlas_for_user_nifti(nifti_file_id, population_mode=True)
+        # Check if already processed and get version
+        if skip_existing:
+            exists, version = check_if_scan_exists(dataset_name, subject_id)
+            if exists:
+                # Check if we should reprocess (v1 -> v2 upgrade)
+                if should_reprocess_scan(version):
+                    print(f"  ♻️  Reprocessing {subject_id}: Upgrading from {version} to v2")
+                    # Continue processing (don't return)
+                else:
+                    print(f"  ⏭️  Skipping {subject_id}: Already processed with {version}")
+                    result['status'] = 'skipped'
+                    return result
 
-        # Calculate ROI volumes
-        roi_volumes = calculate_roi_volumes(nifti_file_id)
+        # Upload NIFTI file (using converted path if ANALYZE was converted)
+        # Retry upload on timeout (large files can timeout on slow connections)
+        max_retries = 3
+        retry_count = 0
+        upload_success = False
 
-        # Get metadata
+        while retry_count < max_retries and not upload_success:
+            try:
+                if retry_count > 0:
+                    print(f"  Retry {retry_count}/{max_retries}...")
+
+                nifti_file, nifti_file_zipped = upload_nifti(
+                    working_filepath,
+                    user_id=None,
+                    public_id=f"population-{dataset_name}-{subject_id}"
+                )
+                nifti_file_id = nifti_file['id']
+                result['nifti_file_id'] = nifti_file_id
+                upload_success = True
+            except Exception as upload_error:
+                retry_count += 1
+                error_msg = str(upload_error).lower()
+                if 'timeout' in error_msg or 'timed out' in error_msg:
+                    if retry_count < max_retries:
+                        print(f"  ⚠️  Upload timeout, retrying ({retry_count}/{max_retries})...")
+                        import time
+                        time.sleep(2 * retry_count)  # Exponential backoff
+                    else:
+                        raise Exception(f"Upload failed after {max_retries} retries: {upload_error}")
+                else:
+                    # Not a timeout error, re-raise immediately
+                    raise
+
+        # Get metadata for this subject (use base subject ID)
+        base_subject_id = get_base_subject_id(subject_id)
         age = metadata_dict.get('age') if metadata_dict else None
         sex = metadata_dict.get('sex', 'U') if metadata_dict else 'U'
         diagnosis = metadata_dict.get('diagnosis') if metadata_dict else None
 
-        # Save population metadata
+        # Create population_scans record FIRST (before preprocessing)
+        # This allows preprocessing and registration steps to update it
+        print(f"  💾 Creating population scan record...")
         pop_record = save_population_scan_metadata(
             nifti_file_id=nifti_file_id,
             dataset_source=dataset_name,
@@ -229,6 +447,59 @@ def process_single_scan(
             sex=sex,
             diagnosis=diagnosis
         )
+        if pop_record:
+            print(f"  ✓ Population record created")
+        else:
+            print(f"  ⚠️  Warning: Could not create population record")
+
+        # Check if N4 correction already applied (based on filename)
+        n4_already_done = is_n4_corrected(filepath)
+        if n4_already_done:
+            print(f"  ℹ️  N4 correction already applied (detected from filename)")
+
+        # NEW: Preprocess scan (N4 + skull-strip + ICV)
+        try:
+            from functions.preprocess_native_scan import preprocess_native_scan
+            print(f"  Preprocessing scan...")
+            preprocess_result = preprocess_native_scan(
+                nifti_file_id,
+                skip_n4=n4_already_done  # Skip N4 if already done
+            )
+            result['icv'] = preprocess_result['icv_mm3']
+            result['preprocessing_method'] = preprocess_result['method']
+            print(f"  ✓ Preprocessing complete (ICV: {preprocess_result['icv_mm3']:,.0f} mm³)")
+        except Exception as e:
+            print(f"  ⚠️  Preprocessing failed: {e}")
+            print(f"     Continuing without preprocessing (will use geometric resampling)")
+            result['preprocessing_method'] = 'failed'
+
+        # NEW: Register to template (use MNI152 - industry standard for all datasets)
+        try:
+            from functions.register_to_template import register_to_template
+
+            # Use MNI152 template for all datasets (industry standard)
+            # This ensures consistency between population norms and user scans
+            template_name = 'mni152'
+
+            print(f"  Registering to MNI152 template...")
+            registration_result = register_to_template(nifti_file_id, method='auto', template_name=template_name)
+            result['registration_method'] = registration_result['registration_method']
+            result['template_used'] = template_name
+            print(f"  ✓ Registration complete ({registration_result['registration_method']})")
+        except Exception as e:
+            print(f"  ⚠️  Registration failed: {e}")
+            print(f"     Continuing without registration (will use geometric resampling)")
+            result['registration_method'] = 'failed'
+
+        # Resample atlas (population mode v2: uses registration transforms if available)
+        # Pass template parameter so it uses the correct atlas version (MNI or OASIS space)
+        atlas_result = resample_atlas_for_user_nifti(nifti_file_id, population_mode=True, template=template_name)
+
+        # Calculate ROI volumes
+        roi_volumes = calculate_roi_volumes(nifti_file_id)
+
+        # Population metadata already saved earlier (before preprocessing)
+        # Preprocessing and registration steps have updated it with ICV and registration info
 
         result['status'] = 'success'
         return result
@@ -322,7 +593,7 @@ def batch_process_population_dataset(
     skip_existing: bool = True,
     dry_run: bool = False,
     offset: int = 0,
-    workers: int = 1
+    workers: Optional[int] = None
 ) -> Dict:
     """
     Batch process a population dataset
@@ -335,11 +606,22 @@ def batch_process_population_dataset(
         skip_existing: Skip scans already in database
         dry_run: If True, only scan and report, don't process
         offset: Number of scans to skip from the beginning (default: 0)
-        workers: Number of parallel workers (default: 1 = sequential)
+        workers: Number of parallel workers (None = auto-detect, 1 = sequential)
 
     Returns:
         Dictionary with processing statistics
     """
+
+    # Auto-detect optimal number of workers if not specified
+    if workers is None:
+        import psutil
+        cpu_count = os.cpu_count() or 1
+        # Estimate memory needed per worker (4GB for registration)
+        available_memory_gb = psutil.virtual_memory().available / (1024**3)
+        max_workers_by_memory = max(1, int(available_memory_gb / 4))
+        # Use all CPUs but respect memory constraints, reserve 1 core for system
+        workers = min(max(1, cpu_count - 1), max_workers_by_memory)
+        print(f"🔧 Auto-detected {workers} workers (CPUs: {cpu_count}, Available RAM: {available_memory_gb:.1f}GB)")
 
     print(f"\n{'='*70}")
     print(f"BATCH POPULATION DATASET PROCESSOR")
@@ -368,6 +650,19 @@ def batch_process_population_dataset(
         print(f"\n📋 Loading metadata from {metadata_csv}...")
         metadata_df = load_metadata_from_csv(metadata_csv)
         print(f"  ✓ Loaded metadata for {len(metadata_df)} subjects")
+
+        # Filter files to only include subjects in metadata
+        # Use base subject ID for matching (without scan-specific suffixes)
+        if metadata_df is not None and len(metadata_df) > 0:
+            metadata_subject_ids = set(metadata_df['subject_id'].tolist())
+            original_count = len(nifti_files)
+            nifti_files = [
+                f for f in nifti_files
+                if get_base_subject_id(extract_subject_id_from_filename(f)) in metadata_subject_ids
+            ]
+            filtered_count = original_count - len(nifti_files)
+            if filtered_count > 0:
+                print(f"  → Filtered out {filtered_count} files not in metadata (kept {len(nifti_files)})")
 
     # Apply offset to skip already processed scans
     if offset > 0:
@@ -451,7 +746,9 @@ def batch_process_population_dataset(
             future_to_filepath = {}
             for filepath in nifti_files:
                 subject_id = extract_subject_id_from_filename(filepath)
-                metadata_dict = metadata_lookup.get(subject_id)
+                # Use base subject ID for metadata lookup (removes scan-specific suffix)
+                base_subject_id = get_base_subject_id(subject_id)
+                metadata_dict = metadata_lookup.get(base_subject_id)
 
                 future = executor.submit(
                     process_single_scan,
@@ -489,96 +786,37 @@ def batch_process_population_dataset(
                     stats['scans_failed'] += 1
 
     else:
-        # SEQUENTIAL PROCESSING (original code)
+        # SEQUENTIAL PROCESSING - use same process_single_scan function
         for i, filepath in enumerate(nifti_files, 1):
             subject_id = extract_subject_id_from_filename(filepath)
+            # Use base subject ID for metadata lookup (removes scan-specific suffix)
+            base_subject_id = get_base_subject_id(subject_id)
+            metadata_dict = metadata_lookup.get(base_subject_id)
 
             print(f"[{i}/{len(nifti_files)}] Processing: {subject_id}")
             print(f"  File: {os.path.basename(filepath)}")
 
-            # Check if already processed
-            if skip_existing and check_if_scan_exists(dataset_name, subject_id):
-                print(f"  ⏭️  Already processed - skipping")
-                stats['scans_skipped'] += 1
-                continue
-
             try:
-                # Upload NIFTI file
-                print(f"  ↗️  Uploading...")
-                nifti_file, nifti_file_zipped = upload_nifti(
+                # Use centralized processing function
+                result = process_single_scan(
                     filepath,
-                    user_id=None,
-                    public_id=f"population-{dataset_name}-{subject_id}"
-                )
-                nifti_file_id = nifti_file['id']
-                stats['nifti_file_ids'].append(nifti_file_id)
-
-                print(f"  ✓ Uploaded: {nifti_file_id}")
-
-                # Resample atlas (population mode: skip FreeSurfer, use MNI atlases only)
-                print(f"  🗺️  Resampling atlas (population mode)...")
-                atlas_result = resample_atlas_for_user_nifti(nifti_file_id, population_mode=True)
-                print(f"  ✓ Atlas resampled")
-
-                # Calculate ROI volumes
-                print(f"  📊 Calculating ROI volumes...")
-                roi_volumes = calculate_roi_volumes(nifti_file_id)
-                print(f"  ✓ Calculated {len(roi_volumes)} ROI volumes")
-
-                # Get metadata for this subject
-                age = None
-                sex = 'U'
-                diagnosis = None
-
-                if metadata_df is not None:
-                    subject_meta = metadata_df[metadata_df['subject_id'] == subject_id]
-                    if len(subject_meta) > 0:
-                        meta_row = subject_meta.iloc[0]
-
-                        # Clean age (handle NaN, convert to int)
-                        age_raw = meta_row.get('age')
-                        if pd.notna(age_raw):
-                            try:
-                                age = int(float(age_raw))
-                            except (ValueError, TypeError):
-                                age = None
-
-                        # Clean sex (ensure M/F/U)
-                        sex_raw = meta_row.get('sex', 'U')
-                        if pd.notna(sex_raw):
-                            sex_str = str(sex_raw).strip().upper()
-                            sex = sex_str if sex_str in ['M', 'F'] else 'U'
-
-                        # Clean diagnosis
-                        diagnosis_raw = meta_row.get('diagnosis')
-                        if pd.notna(diagnosis_raw):
-                            diagnosis = str(diagnosis_raw)
-
-                        print(f"  📋 Metadata found: age={age}, sex={sex}, diagnosis={diagnosis}")
-                    else:
-                        print(f"  ⚠️  No metadata found for subject_id: {subject_id}")
-                        print(f"     CSV has these subject_ids: {metadata_df['subject_id'].head().tolist()}")
-                else:
-                    print(f"  ℹ️  No metadata CSV provided")
-
-                # Save population metadata
-                print(f"  💾 Saving population metadata...")
-                pop_record = save_population_scan_metadata(
-                    nifti_file_id=nifti_file_id,
-                    dataset_source=dataset_name,
-                    subject_id=subject_id,
-                    age=age,
-                    sex=sex,
-                    diagnosis=diagnosis
+                    dataset_name,
+                    metadata_dict,
+                    skip_existing
                 )
 
-                if pop_record:
-                    print(f"  ✓ Population metadata saved")
-                else:
-                    print(f"  ⚠️  Warning: Could not save population metadata")
-
-                stats['scans_processed'] += 1
-                print(f"  ✅ Complete! ({stats['scans_processed']}/{len(nifti_files)})\n")
+                # Update stats based on result
+                if result['status'] == 'skipped':
+                    print(f"  ⏭️  Skipped")
+                    stats['scans_skipped'] += 1
+                elif result['status'] == 'success':
+                    print(f"  ✅ Complete! ({i}/{len(nifti_files)})\n")
+                    stats['scans_processed'] += 1
+                    if result['nifti_file_id']:
+                        stats['nifti_file_ids'].append(result['nifti_file_id'])
+                elif result['status'] == 'failed':
+                    print(f"  ❌ Failed: {result['error']}\n")
+                    stats['scans_failed'] += 1
 
                 # Brief pause to avoid overwhelming the system
                 time.sleep(0.5)
@@ -703,8 +941,8 @@ Examples:
     parser.add_argument(
         '--workers',
         type=int,
-        default=1,
-        help='Number of parallel workers (default: 1 = sequential, use 4-8 for parallel)'
+        default=None,
+        help='Number of parallel workers (default: auto-detect based on CPU/RAM)'
     )
 
     args = parser.parse_args()

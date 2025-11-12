@@ -115,12 +115,14 @@ def validate_atlas_exists(atlas_name: str) -> bool:
     return atlas_name in AVAILABLE_ATLASES
 
 
-def get_atlas_file_path(atlas_name: str = None) -> str:
+def get_atlas_file_path(atlas_name: str = None, template: str = 'mni152') -> str:
     """
     Get the file path for an atlas
 
     Args:
         atlas_name: Name of the atlas (uses default if None)
+        template: Template space to use ('mni152' or 'oasis')
+                 If 'oasis' and OASIS-space atlas exists, returns that path
 
     Returns:
         Path to atlas NIfTI file (empty string for FreeSurfer - loaded from outputs)
@@ -128,6 +130,17 @@ def get_atlas_file_path(atlas_name: str = None) -> str:
     atlas = get_atlas(atlas_name)
     if atlas_name == 'freesurfer':
         return ''  # FreeSurfer atlas loaded from storage, not a static file
+
+    # For OASIS template, check if OASIS-space version exists
+    if template.lower() == 'oasis' and atlas_name in ['harvard-oxford', 'hcpex']:
+        oasis_path = atlas.file_path.replace('.nii.gz', '-oasis.nii.gz')
+        if os.path.exists(oasis_path):
+            return oasis_path
+        else:
+            print(f"⚠️  Warning: OASIS-space {atlas_name} atlas not found: {oasis_path}")
+            print(f"   Run: python -m utilities.prepare_oasis_atlases")
+            print(f"   Falling back to MNI-space atlas (may produce incorrect results)")
+
     return atlas.file_path
 
 

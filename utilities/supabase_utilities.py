@@ -11,6 +11,48 @@ OUTPUT_TYPE_FILE = "file"
 OUTPUT_TYPE_PANDAS = "pandas"
 
 
+def retry_on_timeout(func, max_retries=3, backoff_base=2):
+    """
+    Retry wrapper for Supabase operations that may timeout
+
+    Args:
+        func: Lambda/function to execute (should take no arguments)
+        max_retries: Maximum number of retry attempts (default: 3)
+        backoff_base: Base for exponential backoff in seconds (default: 2)
+
+    Returns:
+        Result from func() if successful
+
+    Raises:
+        Exception: Re-raises the last exception if all retries fail
+
+    Example:
+        retry_on_timeout(lambda: supabase.storage.from_("bucket").upload(path, data))
+    """
+    last_exception = None
+
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            last_exception = e
+            error_msg = str(e).lower()
+
+            # Only retry on timeout errors
+            if 'timed out' in error_msg or 'timeout' in error_msg:
+                if attempt < max_retries - 1:
+                    wait_time = backoff_base ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    print(f"  ⚠️  Timeout error, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+
+            # Re-raise immediately if not a timeout or last attempt
+            raise
+
+    # If we get here, all retries failed
+    raise last_exception
+
+
 def upload_nifti_to_storage(file_data, user_id, file_suffix=""):
     """
     Upload NIFTI file data to storage with automatic compression handling.

@@ -122,6 +122,15 @@ def _calculate_volumes_single_atlas(nifti_file_id, atlas_name, use_parallel=True
     data = user_nifti.get_fdata()
     atlas_data = atlas_sampled_nifti.get_fdata()
 
+    # Squeeze 4D images to 3D if needed (some datasets have trailing dimension)
+    if len(data.shape) == 4 and data.shape[3] == 1:
+        print(f"  ℹ️  Squeezing 4D brain image {data.shape} to 3D")
+        data = np.squeeze(data, axis=3)
+
+    if len(atlas_data.shape) == 4 and atlas_data.shape[3] == 1:
+        print(f"  ℹ️  Squeezing 4D atlas image {atlas_data.shape} to 3D")
+        atlas_data = np.squeeze(atlas_data, axis=3)
+
     # Round atlas data to nearest integer (resampling can create floating point values)
     atlas_data = np.round(atlas_data).astype(int)
 
@@ -168,20 +177,51 @@ def _calculate_volumes_single_atlas(nifti_file_id, atlas_name, use_parallel=True
                 print(f"  Progress: {idx}/{total_regions} regions ({progress_pct:.1f}%)")
 
 
+    # Determine processing version based on source
+    # v2 if preprocessed/registered, v1 if just geometric resampling
+    processing_version = 'v1_geometric'  # Default (old behavior)
+
+    # Check if this scan has registration data (v2 pipeline)
+    try:
+        check_registration = supabase.table('population_scans').select('registration_method').eq('nifti_file_id', nifti_file_id).execute()
+
+        print(f"  🔍 Database check for registration method:")
+        print(f"     Query result: {check_registration.data}")
+
+        if check_registration.data and len(check_registration.data) > 0:
+            registration_method = check_registration.data[0].get('registration_method')
+            print(f"     registration_method field: {repr(registration_method)}")
+
+            if registration_method:
+                # Has registration method stored - this is v2
+                processing_version = 'v2_registered'
+                print(f"  ✓ Using v2 processing (registered with {registration_method})")
+            else:
+                print(f"  ℹ️  Using v1 processing (geometric - registration_method is None/empty)")
+        else:
+            print(f"  ℹ️  Using v1 processing (geometric - no population_scans record found)")
+    except Exception as e:
+        print(f"  ℹ️  Could not check registration method: {e}")
+        import traceback
+        traceback.print_exc()
+
     # save roi_volumes for the user's nifti file (with atlas_name)
     roi_volume_records = [
         {
             "nifti_file_id": nifti_file_id,
             "label": int(roi_label),  # Convert numpy int64 to Python int
             "volume": float(roi_volume),
-            "atlas_name": atlas_name
+            "atlas_name": atlas_name,
+            "processing_version": processing_version,
+            "voxel_count": int(np.sum((atlas_data == roi_label) & (data > 0))),
+            "voxel_size_mm3": float(voxel_size)
         }
         for roi_label, roi_volume in roi_volumes.items()
     ]
     response = (supabase.schema("public").table("roi_volumes")
                 .upsert(roi_volume_records, on_conflict="nifti_file_id, label, atlas_name").execute())
 
-    print(f"✅ Saved {len(roi_volume_records)} ROI volumes for {atlas_name} atlas")
+    print(f"✅ Saved {len(roi_volume_records)} ROI volumes for {atlas_name} atlas (version: {processing_version})")
     return response.data
 
 

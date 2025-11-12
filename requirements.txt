@@ -19,3 +19,7 @@ openpyxl
 trimesh==4.5.3
 scikit-image==0.24.0
 fast-simplification
+antspyx==0.4.2
+SimpleITK==2.3.1
+scikit-learn==1.5.2
+hd-bet
