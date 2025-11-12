@@ -85,20 +85,26 @@ def _calculate_volumes_single_atlas(nifti_file_id, atlas_name, use_parallel=True
     source = None
 
     try:
-        # Try FreeSurfer brain.mgz (preferred - properly oriented)
-        print("📥 Checking for FreeSurfer brain.mgz...")
-        brain_mgz_data = supabase.storage.from_("freesurfer-outputs").download(
-            f"{nifti_file_id}/mri/brain.mgz"
-        )
+        # IMPORTANT: For user scans with FreeSurfer processing, ALL atlases (freesurfer,
+        # harvard-oxford, hcpex) are resampled to the CROPPED visualization brain space.
+        # This is because resample_atlas_for_user_nifti() transforms everything to match
+        # brain_optimized_freesurfer.nii.gz (cropped native space).
+        #
+        # For population scans (no FreeSurfer), this try block will fail and fall back
+        # to the preprocessed brain, which is correct.
 
-        # Save to temp file
         import tempfile
-        user_nifti_path = os.path.join(tempfile.gettempdir(), f"brain_{nifti_file_id}.mgz")
-        with open(user_nifti_path, 'wb') as f:
-            f.write(brain_mgz_data)
 
-        source = "freesurfer_brain.mgz"
-        print("✅ Using FreeSurfer brain.mgz (matches atlas resampling)")
+        # Try to use FreeSurfer visualization brain (cropped) - this is what ALL atlases match
+        print("📥 Checking for FreeSurfer visualization brain (cropped)...")
+        brain_data = supabase.storage.from_("freesurfer-outputs").download(
+            f"{nifti_file_id}/visualization/brain_optimized_freesurfer.nii.gz"
+        )
+        user_nifti_path = os.path.join(tempfile.gettempdir(), f"brain_fs_vis_{nifti_file_id}.nii.gz")
+        with open(user_nifti_path, 'wb') as f:
+            f.write(brain_data)
+        source = "freesurfer_visualization_brain"
+        print("✅ Using FreeSurfer visualization brain (cropped, matches atlas resampling)")
 
     except Exception as e:
         print(f"ℹ️  FreeSurfer brain.mgz not available, using original upload")
