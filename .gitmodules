@@ -1,0 +1,3 @@
+[submodule "FastSurfer"]
+	path = FastSurfer
+	url = https://github.com/brainyes/FastSurfer.git

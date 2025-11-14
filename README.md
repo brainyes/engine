@@ -1,5 +1,13 @@
 # BrainYes engine
 
+
+## Cloning
+
+You need to clone this `engine` repo with submodules for FastSurfer:
+```
+git clone --recurse-submodules https://github.com/brainyes/engine.git
+```
+
 ## Infinitely scalable MRI processing engine
 
 See `./docs`.

@@ -16,6 +16,36 @@ from utilities.data import supabase
 FUNCTION_NAME = "backfill_population_metadata"
 
 
+def get_base_subject_id(subject_id: str) -> str:
+    """
+    Get base subject ID for metadata matching (removes scan-specific suffixes)
+
+    Examples:
+    - OAS1_0102_MR1_mpr-1 -> OAS1_0102_MR1
+    - OAS1_0102_MR1_sbj -> OAS1_0102_MR1
+    - OAS1_0102_MR1 -> OAS1_0102_MR1
+
+    Args:
+        subject_id: Full subject ID (potentially with scan suffix)
+
+    Returns:
+        Base subject ID (for metadata matching)
+    """
+    # Remove scan-specific suffixes
+    if '_mpr-' in subject_id:
+        # OAS1_0102_MR1_mpr-1 -> OAS1_0102_MR1
+        return subject_id.rsplit('_mpr-', 1)[0]
+    elif subject_id.endswith('_sbj'):
+        # OAS1_0102_MR1_sbj -> OAS1_0102_MR1
+        return subject_id.rsplit('_sbj', 1)[0]
+    elif subject_id.endswith('_n4'):
+        # OAS1_0102_MR1_n4 -> OAS1_0102_MR1
+        return subject_id.rsplit('_n4', 1)[0]
+
+    # Already a base ID
+    return subject_id
+
+
 def load_metadata_from_csv(metadata_path: str) -> pd.DataFrame:
     """
     Load subject metadata from CSV file
@@ -187,7 +217,12 @@ def backfill_population_metadata(
         print(f"  Current: age={scan.get('age')}, sex={scan.get('sex')}")
 
         # Find matching metadata
-        subject_meta = metadata_df[metadata_df['subject_id'] == subject_id]
+        # Use base subject ID to match (removes suffixes like _mpr-1, _sbj)
+        base_subject_id = get_base_subject_id(subject_id)
+        if base_subject_id != subject_id:
+            print(f"  Base ID: {base_subject_id} (for metadata matching)")
+
+        subject_meta = metadata_df[metadata_df['subject_id'] == base_subject_id]
 
         if len(subject_meta) == 0:
             print(f"  ⚠️  No metadata found in CSV for subject {subject_id}")

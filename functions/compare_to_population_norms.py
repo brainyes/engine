@@ -25,9 +25,14 @@ from scipy import stats
 from utilities.data import supabase
 from utilities.supabase_utilities import get_roi_volumes, get_user_profile
 from utilities.volume_labels import get_region_name
-from utilities.population_utilities import GLOBAL_MEASURE_ROI_LABELS, GLOBAL_MEASURE_DISPLAY_NAMES
+from utilities.population_utilities import (
+    GLOBAL_MEASURE_ROI_LABELS,
+    GLOBAL_MEASURE_DISPLAY_NAMES,
+    GLOBAL_MEASURE_ATLAS_NAME
+)
 
 FUNCTION_NAME = "compare_to_population_norms"
+GLOBAL_MEASURE_ROI_LABEL_SET = set(GLOBAL_MEASURE_ROI_LABELS.values())
 
 
 def get_normative_data(
@@ -49,32 +54,42 @@ def get_normative_data(
         Dictionary with normative statistics, or None if not found
     """
 
-    # Try exact match first (age bin + sex + atlas)
-    response = supabase.table('normative_brain_data')\
-        .select('*')\
-        .eq('roi_label', roi_label)\
-        .eq('atlas_name', atlas_name)\
-        .lte('age_min', age)\
-        .gte('age_max', age)\
-        .eq('sex', sex)\
-        .execute()
-
-    if response.data and len(response.data) > 0:
-        return response.data[0]
-
-    # Fallback to combined sex if sex-specific not found
-    if sex != 'U':
+    def _fetch_norm(atlas: str, sex_value: str):
         response = supabase.table('normative_brain_data')\
             .select('*')\
             .eq('roi_label', roi_label)\
-            .eq('atlas_name', atlas_name)\
+            .eq('atlas_name', atlas)\
             .lte('age_min', age)\
             .gte('age_max', age)\
-            .eq('sex', 'U')\
+            .eq('sex', sex_value)\
             .execute()
 
         if response.data and len(response.data) > 0:
             return response.data[0]
+
+        return None
+
+    # Try exact match first (age bin + sex + atlas)
+    norm_data = _fetch_norm(atlas_name, sex)
+    if norm_data:
+        return norm_data
+
+    # Fallback to combined sex if sex-specific not found
+    if sex != 'U':
+        norm_data = _fetch_norm(atlas_name, 'U')
+        if norm_data:
+            return norm_data
+
+    # Global measures are atlas-agnostic, so try the sentinel atlas
+    if roi_label in GLOBAL_MEASURE_ROI_LABEL_SET and atlas_name != GLOBAL_MEASURE_ATLAS_NAME:
+        norm_data = _fetch_norm(GLOBAL_MEASURE_ATLAS_NAME, sex)
+        if norm_data:
+            return norm_data
+
+        if sex != 'U':
+            norm_data = _fetch_norm(GLOBAL_MEASURE_ATLAS_NAME, 'U')
+            if norm_data:
+                return norm_data
 
     return None
 

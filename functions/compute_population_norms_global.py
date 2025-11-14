@@ -18,8 +18,13 @@ import pandas as pd
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 
+from postgrest.exceptions import APIError
 from utilities.data import supabase
-from utilities.population_utilities import GLOBAL_MEASURE_ROI_LABELS, GLOBAL_MEASURE_DISPLAY_NAMES
+from utilities.population_utilities import (
+    GLOBAL_MEASURE_ROI_LABELS,
+    GLOBAL_MEASURE_DISPLAY_NAMES,
+    GLOBAL_MEASURE_ATLAS_NAME
+)
 from functions.compute_population_norms import (
     create_age_bins,
     assign_age_bin,
@@ -79,17 +84,31 @@ def get_population_scans_with_global_measures(
     # Get global measures for these scans
     nifti_file_ids = scans_df['nifti_file_id'].tolist()
 
-    # Fetch in batches to avoid query limits
-    batch_size = 1000
+    def fetch_measures_for_ids(ids: List[str]) -> List[Dict]:
+        if not ids:
+            return []
+
+        try:
+            response = supabase.table('freesurfer_global_measures')\
+                .select('*')\
+                .in_('nifti_file_id', ids)\
+                .execute()
+            return response.data or []
+        except APIError as err:
+            if len(ids) == 1:
+                raise
+
+            mid = len(ids) // 2
+            print(f"  ⚠️  Batch of {len(ids)} IDs caused {err.code or 'API'} error. Splitting and retrying...")
+            return fetch_measures_for_ids(ids[:mid]) + fetch_measures_for_ids(ids[mid:])
+
+    # Fetch in smaller batches to avoid URL limits (PostgREST GET)
+    batch_size = 150
     all_measures = []
 
     for i in range(0, len(nifti_file_ids), batch_size):
         batch = nifti_file_ids[i:i + batch_size]
-        measures_response = supabase.table('freesurfer_global_measures')\
-            .select('*')\
-            .in_('nifti_file_id', batch)\
-            .execute()
-        all_measures.extend(measures_response.data)
+        all_measures.extend(fetch_measures_for_ids(batch))
 
     if not all_measures:
         print("  ⚠️  No global measures found for population scans")
@@ -229,6 +248,7 @@ def compute_population_norms_global(
                             'age_min': age_min,
                             'age_max': age_max,
                             'sex': sex,
+                            'atlas_name': GLOBAL_MEASURE_ATLAS_NAME,
                             'mean': stats['mean'],
                             'std': stats['std'],
                             'p10': stats['p10'],
@@ -263,6 +283,7 @@ def compute_population_norms_global(
                             'age_min': age_min,
                             'age_max': age_max,
                             'sex': 'U',  # Combined
+                            'atlas_name': GLOBAL_MEASURE_ATLAS_NAME,
                             'mean': stats['mean'],
                             'std': stats['std'],
                             'p10': stats['p10'],
