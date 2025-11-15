@@ -44,32 +44,55 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy FreeSurfer .deb file if it exists (downloaded by buildspec or provided locally)
+# ===== FreeSurfer 8 Installation =====
+# Copy FreeSurfer 8 .deb file if it exists (downloaded by buildspec or provided locally)
 # Wildcard prevents failure if missing
 COPY freesurfer_ubuntu22-8.1.0_amd64.deb* .
 
 # Download from Harvard server if not present locally (fallback)
 RUN if [ ! -f freesurfer_ubuntu22-8.1.0_amd64.deb ]; then \
-      echo "FreeSurfer package not found locally, downloading from Harvard server..."; \
+      echo "FreeSurfer 8 package not found locally, downloading from Harvard server..."; \
       wget -q https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb; \
     else \
-      echo "Using local FreeSurfer package"; \
+      echo "Using local FreeSurfer 8 package"; \
     fi
 
-# Set FreeSurfer environment variables
-ENV FREESURFER_HOME=/usr/local/freesurfer/8.1.0
-ENV FREESURFER=$FREESURFER_HOME
-ENV PATH=$FREESURFER_HOME/bin:$PATH
-
-# Install FreeSurfer
+# Install FreeSurfer 8
 RUN apt-get update && \
     apt-get install -y ./freesurfer_ubuntu22-8.1.0_amd64.deb && \
     rm freesurfer_ubuntu22-8.1.0_amd64.deb && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy FreeSurfer license file
+# Set FreeSurfer 8 environment variables (default)
+ENV FREESURFER_HOME=/usr/local/freesurfer/8.1.0
+ENV FREESURFER=$FREESURFER_HOME
+ENV PATH=$FREESURFER_HOME/bin:$PATH
+
+# ===== FreeSurfer 7 Installation (for FastSurfer) =====
+# Copy FreeSurfer 7 .deb file if it exists
+COPY freesurfer_ubuntu22-7.4.1_amd64.deb* .
+
+# Download FreeSurfer 7.4.1 if not present locally (fallback)
+RUN if [ ! -f freesurfer_ubuntu22-7.4.1_amd64.deb ]; then \
+      echo "FreeSurfer 7 package not found locally, downloading from Harvard server..."; \
+      wget -q https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/7.4.1/freesurfer_ubuntu22-7.4.1_amd64.deb; \
+    else \
+      echo "Using local FreeSurfer 7 package"; \
+    fi
+
+# Install FreeSurfer 7
+RUN apt-get update && \
+    apt-get install -y ./freesurfer_ubuntu22-7.4.1_amd64.deb && \
+    rm freesurfer_ubuntu22-7.4.1_amd64.deb && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set FreeSurfer 7 environment variables (for FastSurfer compatibility)
+ENV FREESURFER7_HOME=/usr/local/freesurfer/7.4.1
+
+# Copy FreeSurfer license file to both versions
 ENV FS_LICENSE=$FREESURFER_HOME/license.txt
 COPY freesurfer_license.txt $FREESURFER_HOME/license.txt
+COPY freesurfer_license.txt $FREESURFER7_HOME/license.txt
 
 # Create app directory
 WORKDIR /app
@@ -89,6 +112,12 @@ COPY utilities/ ./utilities/
 COPY insights/ ./insights/
 COPY handlers/ ./handlers/
 COPY research/input/ ./research/input/
+
+# Copy FastSurfer submodule
+COPY FastSurfer/ ./FastSurfer/
+
+# Set FastSurfer environment variable
+ENV FASTSURFER_HOME=/app/FastSurfer
 
 # Create a non-root user
 RUN useradd -m -s /bin/bash brainyes

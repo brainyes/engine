@@ -33,6 +33,37 @@ python -m functions.annot-to-json research/input/raw/lh.custom_regions_de_ki.ann
 # Get help for any function
 python -m functions.function_name --help
 ```
+
+### FastSurfer Processing (Fast Deep Learning Alternative to FreeSurfer)
+
+FastSurfer is ~10-20x faster than FreeSurfer with comparable accuracy.
+
+```bash
+# Quick segmentation only (~5 minutes with GPU)
+python -m functions.fastsurfer_recon_all FILE_ID --seg-only --device cuda
+
+# Full pipeline (~60-90 minutes with GPU)
+python -m functions.fastsurfer_recon_all FILE_ID --device cuda --parallel-cores 8
+
+# Store FastSurfer outputs
+python -m functions.fastsurfer_store_files FILE_ID FASTSURFER_OUTPUT_DIR --storage-mode essential
+
+# Parse and store statistics
+python -m functions.fastsurfer_parse_statistics FILE_ID FASTSURFER_OUTPUT_DIR
+
+# Complete workflow example
+FILE_ID=d7db5b0a-d967-4dcc-9c7d-43d8d4a48dc9
+python -m functions.fastsurfer_recon_all $FILE_ID --seg-only --subjects-dir ./fastsurfer_output
+python -m functions.fastsurfer_store_files $FILE_ID ./fastsurfer_output/sub-$FILE_ID --storage-mode essential
+python -m functions.fastsurfer_parse_statistics $FILE_ID ./fastsurfer_output/sub-$FILE_ID
+```
+
+**FastSurfer Requirements**:
+- FreeSurfer 7 (installed alongside FreeSurfer 8 in Docker)
+- FastSurfer submodule initialized: `git submodule update --init FastSurfer`
+- GPU recommended for speed (CPU works but slower)
+
+See `docs/FASTSURFER_INTEGRATION.md` for detailed guide.
 ### Automated Testing
 ```bash
 # Run quick tests (recommended before commits)

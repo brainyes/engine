@@ -34,6 +34,7 @@ import pandas as pd
 import traceback
 
 from functions.calculate_roi_volumes import calculate_roi_volumes
+from functions.compute_global_measures_from_rois import compute_global_measures_from_rois
 from functions.resample_atlas_for_user_nifti import resample_atlas_for_user_nifti
 from functions.upload_nifti import upload_nifti
 from utilities.data import supabase
@@ -497,6 +498,12 @@ def process_single_scan(
 
         # Calculate ROI volumes
         roi_volumes = calculate_roi_volumes(nifti_file_id)
+
+        # Derive global measures from ROI volumes (needed for population norms)
+        try:
+            compute_global_measures_from_rois(nifti_file_id, overwrite=False, verbose=True)
+        except Exception as gm_error:
+            print(f"  ⚠️  Could not derive global measures from ROI volumes: {gm_error}")
 
         # Population metadata already saved earlier (before preprocessing)
         # Preprocessing and registration steps have updated it with ICV and registration info

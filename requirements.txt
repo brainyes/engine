@@ -23,3 +23,4 @@ antspyx==0.4.2
 SimpleITK==2.3.1
 scikit-learn==1.5.2
 hd-bet
+lapy # needed for FastSurfer somehow

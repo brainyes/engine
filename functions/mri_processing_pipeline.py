@@ -7,13 +7,23 @@ from functions.preprocess_native_scan import preprocess_native_scan
 from functions.register_to_template import register_to_template
 from functions.resample_atlas_for_user_nifti import resample_atlas_for_user_nifti
 from functions.calculate_roi_volumes import calculate_roi_volumes
+from functions.compute_global_measures_from_rois import compute_global_measures_from_rois
 from functions.prepare_volume_visualization import prepare_volume_visualization
 from functions.calculate_memory_metrics import calculate_memory_metrics
 from functions.compare_to_population_norms import compare_to_population_norms
+
+# FastSurfer functions (default, ~10-20x faster)
+from functions.fastsurfer_recon_all import fastsurfer_recon_all
+from functions.fastsurfer_store_files import fastsurfer_store_files
+from functions.fastsurfer_parse_statistics import fastsurfer_parse_statistics
+
+# FreeSurfer functions (fallback)
 from functions.freesurfer_recon_all import freesurfer_recon_all
 from functions.freesurfer_store_files import freesurfer_store_files
-from functions.generate_surface_files import generate_surface_files
 from functions.freesurfer_parse_statistics import freesurfer_parse_statistics
+
+# Shared post-processing (works with both FastSurfer and FreeSurfer)
+from functions.generate_surface_files import generate_surface_files
 from functions.generate_visualization_data import generate_visualization_data
 
 FUNCTION_NAME = "mri_processing_pipeline"
@@ -23,6 +33,7 @@ def mri_processing_pipeline(
     user_id=None,
     age=None,
     sex='U',
+    surface_pipeline='fastsurfer',  # 'fastsurfer' (default, 10-20x faster) or 'freesurfer'
     **kwargs
 ):
     """
@@ -36,6 +47,7 @@ def mri_processing_pipeline(
         user_id (str): Optional user ID for tracking
         age (int): Optional age for population comparison
         sex (str): Optional sex ('M', 'F', or 'U') for population comparison
+        surface_pipeline (str): Surface processing method - 'fastsurfer' (default, ~60-90 min) or 'freesurfer' (~4-8 hours)
 
     Returns:
         dict: Complete pipeline results
@@ -87,6 +99,16 @@ def mri_processing_pipeline(
         results['roi_volumes'] = calculate_roi_volumes(nifti_file_id)
         results['steps_completed'].append('roi_volumes')
 
+        # Derive global measures from ROI volumes (for scans without FreeSurfer stats yet)
+        try:
+            results['global_measures'] = compute_global_measures_from_rois(
+                nifti_file_id,
+                overwrite=False,
+                verbose=True
+            )
+        except Exception as gm_error:
+            print(f"  ⚠️  Skipped ROI-derived global measures: {gm_error}")
+
         # STEP 5: Prepare Volume Visualization
         print("\n" + "="*80)
         print(f"STEP 5/{CORE_PIPELINE_STEPS}: Preparing Volume Visualization (Region Meshes)")
@@ -125,65 +147,93 @@ def mri_processing_pipeline(
 
         core_steps_completed = len(results['steps_completed'])
 
-        # FreeSurfer Post-Processing (runs after core steps complete)
+        # Surface Processing Post-Pipeline (FastSurfer or FreeSurfer)
         print("\n" + "="*80)
         print("CORE PIPELINE COMPLETE ✅")
         print(f"Core steps completed: {core_steps_completed}/{CORE_PIPELINE_STEPS}")
-        print("Initiating FreeSurfer post-processing...")
+        if surface_pipeline == 'fastsurfer':
+            print("Initiating FastSurfer post-processing (10-20x faster)...")
+        else:
+            print("Initiating FreeSurfer post-processing...")
         print("="*80)
 
-        # POST 1: FreeSurfer Recon-All (LONG!)
+        # POST 1: Surface Reconstruction (FastSurfer or FreeSurfer)
         print("\n" + "="*80)
-        print("FREESURFER POST 1/5: FreeSurfer Recon-All")
-        print("⚠️  This step takes 4-8 hours")
-        print("="*80)
-        freesurfer_result = freesurfer_recon_all(nifti_file_id, user_id=user_id)
-        results['freesurfer'] = freesurfer_result
-        results['steps_completed'].append('freesurfer_recon_all')
+        if surface_pipeline == 'fastsurfer':
+            print("SURFACE POST 1/5: FastSurfer Recon-All")
+            print("⚠️  This step takes 60-90 minutes (full pipeline)")
+            print("="*80)
+            surface_result = fastsurfer_recon_all(nifti_file_id, user_id=user_id)
+            results['fastsurfer'] = surface_result
+            results['steps_completed'].append('fastsurfer_recon_all')
+            results['processing_method'] = 'fastsurfer'
+        else:
+            print("SURFACE POST 1/5: FreeSurfer Recon-All")
+            print("⚠️  This step takes 4-8 hours")
+            print("="*80)
+            surface_result = freesurfer_recon_all(nifti_file_id, user_id=user_id)
+            results['freesurfer'] = surface_result
+            results['steps_completed'].append('freesurfer_recon_all')
+            results['processing_method'] = 'freesurfer'
 
-        # Extract FreeSurfer outputs for next steps
-        freesurfer_dir = freesurfer_result['output_directory']
-        subject_id = freesurfer_result['subject_id']
+        # Extract surface processing outputs for next steps
+        surface_dir = surface_result['output_directory']
+        subject_id = surface_result['subject_id']
 
-        print(f"  📁 FreeSurfer output: {freesurfer_dir}")
+        print(f"  📁 Surface output: {surface_dir}")
         print(f"  👤 Subject ID: {subject_id}")
 
-        # POST 2: Store FreeSurfer Files
+        # POST 2: Store Surface Files
         print("\n" + "="*80)
-        print("FREESURFER POST 2/5: Storing FreeSurfer Files")
+        print("SURFACE POST 2/5: Storing Surface Files")
         print("="*80)
-        results['store_files'] = freesurfer_store_files(
-            nifti_file_id=nifti_file_id,
-            freesurfer_output_directory=freesurfer_dir,
-            subject_id=subject_id
-        )
+        if surface_pipeline == 'fastsurfer':
+            results['store_files'] = fastsurfer_store_files(
+                nifti_file_id=nifti_file_id,
+                fastsurfer_output_directory=surface_dir,
+                subject_id=subject_id,
+                storage_mode='essential'  # ~50MB instead of ~230MB
+            )
+        else:
+            results['store_files'] = freesurfer_store_files(
+                nifti_file_id=nifti_file_id,
+                freesurfer_output_directory=surface_dir,
+                subject_id=subject_id
+            )
         results['steps_completed'].append('store_files')
 
         # POST 3: Generate Surface Files (.asc)
         print("\n" + "="*80)
-        print("FREESURFER POST 3/5: Generating Surface Files (.asc)")
+        print("SURFACE POST 3/5: Generating Surface Files (.asc)")
         print("="*80)
         results['surface_files'] = generate_surface_files(
             nifti_file_id=nifti_file_id,
-            freesurfer_output_directory=freesurfer_dir,
+            freesurfer_output_directory=surface_dir,  # Works with both FastSurfer and FreeSurfer
             subject_id=subject_id
         )
         results['steps_completed'].append('surface_files')
 
         # POST 4: Parse Statistics
         print("\n" + "="*80)
-        print("FREESURFER POST 4/5: Parsing Statistics")
+        print("SURFACE POST 4/5: Parsing Statistics")
         print("="*80)
-        results['parse_statistics'] = freesurfer_parse_statistics(
-            nifti_file_id=nifti_file_id,
-            freesurfer_output_directory=freesurfer_dir,
-            subject_id=subject_id
-        )
+        if surface_pipeline == 'fastsurfer':
+            results['parse_statistics'] = fastsurfer_parse_statistics(
+                nifti_file_id=nifti_file_id,
+                fastsurfer_output_directory=surface_dir,
+                subject_id=subject_id
+            )
+        else:
+            results['parse_statistics'] = freesurfer_parse_statistics(
+                nifti_file_id=nifti_file_id,
+                freesurfer_output_directory=surface_dir,
+                subject_id=subject_id
+            )
         results['steps_completed'].append('parse_statistics')
 
         # POST 5: Generate Visualization Data
         print("\n" + "="*80)
-        print("FREESURFER POST 5/5: Generating Visualization Data")
+        print("SURFACE POST 5/5: Generating Visualization Data")
         print("="*80)
         results['visualization'] = generate_visualization_data(
             nifti_file_id=nifti_file_id,
@@ -233,6 +283,8 @@ if __name__ == "__main__":
     parser.add_argument('--user-id', help='User ID (optional)')
     parser.add_argument('--age', type=int, help='Age in years (optional - will fetch from user profile if not provided)')
     parser.add_argument('--sex', choices=['M', 'F', 'U'], help='Sex (M/F/U, optional - will fetch from user profile if not provided)')
+    parser.add_argument('--surface-pipeline', choices=['fastsurfer', 'freesurfer'], default='fastsurfer',
+                       help='Surface processing method: fastsurfer (default, ~60-90 min) or freesurfer (~4-8 hours)')
 
     args = parser.parse_args()
 
@@ -245,14 +297,25 @@ if __name__ == "__main__":
     print("5. Prepare volume visualization (~30s)")
     print("6. Calculate memory metrics (~30s)")
     print("7. Compare to population norms for ALL atlases (~1 min)")
-    print("\nFreeSurfer post-processing (runs after core pipeline):")
-    print("  a. FreeSurfer recon-all (4-8 hours)")
-    print("  b. Store FreeSurfer files (~1 min)")
-    print("  c. Generate surface files (.asc) (~1 min)")
-    print("  d. Parse statistics (~30s)")
-    print("  e. Generate visualization data (aparc) (~30s)")
+
+    if args.surface_pipeline == 'fastsurfer':
+        print("\nSurface post-processing with FastSurfer (DEFAULT, 10-20x faster):")
+        print("  a. FastSurfer recon-all (60-90 minutes)")
+        print("  b. Store FastSurfer files (~1 min)")
+        print("  c. Generate surface files (.asc) (~1 min)")
+        print("  d. Parse statistics (~30s)")
+        print("  e. Generate visualization data (aparc) (~30s)")
+        print("\nTotal expected time: ~75-105 minutes (dominated by FastSurfer recon-all)")
+    else:
+        print("\nSurface post-processing with FreeSurfer (SLOWER, traditional):")
+        print("  a. FreeSurfer recon-all (4-8 hours)")
+        print("  b. Store FreeSurfer files (~1 min)")
+        print("  c. Generate surface files (.asc) (~1 min)")
+        print("  d. Parse statistics (~30s)")
+        print("  e. Generate visualization data (aparc) (~30s)")
+        print("\nTotal expected time: 4-8 hours (dominated by FreeSurfer recon-all)")
+
     print("\nAtlases: All available (Harvard-Oxford, HCPex)")
-    print("Total expected time: 4-8 hours (dominated by FreeSurfer recon-all)")
     print("All steps run directly without API calls\n")
 
     try:
@@ -260,10 +323,12 @@ if __name__ == "__main__":
             nifti_file_id=args.nifti_file_id,
             user_id=args.user_id,
             age=args.age,
-            sex=args.sex
+            sex=args.sex,
+            surface_pipeline=args.surface_pipeline
         )
         print("\n✅ Pipeline successful!")
         print(f"Completed steps: {result['steps_completed']}")
+        print(f"Processing method: {result['processing_method']}")
     except Exception as e:
         print(f"\n❌ Pipeline failed: {str(e)}")
         os._exit(1)
