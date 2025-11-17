@@ -180,18 +180,18 @@ FILE_ID=$(python -m functions.upload_nifti research/input/raw/sub-OASIS10001_ses
 # Step 2: Run FastSurfer (segmentation only for speed)
 python -m functions.fastsurfer_recon_all $FILE_ID \
     --seg-only \
-    --subjects-dir ./fastsurfer_output
+    --subjects-dir ./___fastsurfer_output
 
 # Step 3: Store files
 python -m functions.fastsurfer_store_files \
     $FILE_ID \
-    ./fastsurfer_output/sub-$FILE_ID \
+    ./___fastsurfer_output/sub-$FILE_ID \
     --storage-mode essential
 
 # Step 4: Parse statistics
 python -m functions.fastsurfer_parse_statistics \
     $FILE_ID \
-    ./fastsurfer_output/sub-$FILE_ID
+    ./___fastsurfer_output/sub-$FILE_ID
 ```
 
 ### Docker Processing

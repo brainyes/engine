@@ -11,11 +11,15 @@ FUNCTION_NAME = "generate_visualization_data"
 
 def generate_visualization_data(nifti_file_id, parcellation="aparc", **kwargs):
     """
-    Generate visualization data (JSON files) for frontend from FreeSurfer outputs.
+    Generate visualization data (JSON files) for frontend from FreeSurfer/FastSurfer outputs.
 
-    This function downloads FreeSurfer annotation files from object storage,
-    converts them to JSON format, and uploads them back to the same bucket
-    under a 'visualization' directory for centralized per-nifti-file storage.
+    This function downloads annotation files from object storage (supports both FreeSurfer
+    and FastSurfer naming conventions), converts them to JSON format, and uploads them
+    back to the same bucket under a 'visualization' directory for centralized storage.
+
+    Compatible with:
+        - FreeSurfer: lh.aparc.annot, rh.aparc.annot
+        - FastSurfer: lh.aparc.DKTatlas.mapped.annot, rh.aparc.DKTatlas.mapped.annot
 
     Storage structure in freesurfer-outputs bucket:
         {nifti_file_id}/label/          - Original .annot files
@@ -25,10 +29,11 @@ def generate_visualization_data(nifti_file_id, parcellation="aparc", **kwargs):
         {nifti_file_id}/visualization/  - JSON files for frontend (generated here)
 
     Args:
-        nifti_file_id (str): The ID of the NIFTI file whose FreeSurfer outputs to process
+        nifti_file_id (str): The ID of the NIFTI file whose FreeSurfer/FastSurfer outputs to process
         parcellation (str): Parcellation type (default: "aparc" - Desikan-Killiany atlas).
                            Standard: "aparc", "aparc.DKTatlas", "aparc.a2009s"
                            Custom: "custom_regions_de_ki", "custom_regions", "mpm.vpnl", etc.
+                           Note: For "aparc", automatically tries FastSurfer's DKTatlas.mapped variant
         **kwargs: Additional parameters
 
     Returns:
@@ -51,26 +56,61 @@ def generate_visualization_data(nifti_file_id, parcellation="aparc", **kwargs):
     try:
         # Download annotation files from FreeSurfer outputs
         print(f"\n📥 Downloading annotation files from storage...")
+        temp_dir = tempfile.mkdtemp()
+
         for hemi in hemispheres:
-            annot_filename = f"{hemi}.{parcellation}.annot"
-            storage_path = f"{nifti_file_id}/label/{annot_filename}"
+            # Try multiple filename patterns to accommodate both FreeSurfer and FastSurfer
+            # FreeSurfer: lh.aparc.annot
+            # FastSurfer: lh.aparc.DKTatlas.mapped.annot (with symlink lh.aparc.DKTatlas.annot)
 
-            try:
-                # Download from freesurfer-outputs bucket
-                print(f"Downloading: {storage_path}")
-                response = supabase.storage.from_("freesurfer-outputs").download(storage_path)
+            possible_filenames = []
 
-                # Save to temporary file
-                temp_dir = tempfile.mkdtemp()
-                local_path = os.path.join(temp_dir, annot_filename)
-                with open(local_path, 'wb') as f:
-                    f.write(response)
+            # Standard naming patterns
+            if parcellation == "aparc":
+                # FastSurfer uses DKTatlas.mapped for aparc
+                possible_filenames = [
+                    f"{hemi}.{parcellation}.annot",  # FreeSurfer standard
+                    f"{hemi}.aparc.DKTatlas.mapped.annot",  # FastSurfer aparc
+                    f"{hemi}.aparc.DKTatlas.annot",  # FastSurfer aparc symlink
+                ]
+            else:
+                # For other parcellations, try standard and .mapped variants
+                possible_filenames = [
+                    f"{hemi}.{parcellation}.annot",  # Standard
+                    f"{hemi}.{parcellation}.mapped.annot",  # FastSurfer .mapped variant
+                ]
 
-                annot_files[hemi] = local_path
-                print(f"✅ Downloaded {annot_filename}")
+            downloaded = False
+            last_error = None
 
-            except Exception as e:
-                raise FileNotFoundError(f"Could not download {annot_filename} from storage: {str(e)}")
+            for annot_filename in possible_filenames:
+                storage_path = f"{nifti_file_id}/label/{annot_filename}"
+
+                try:
+                    # Download from freesurfer-outputs bucket
+                    print(f"Trying to download: {storage_path}")
+                    response = supabase.storage.from_("freesurfer-outputs").download(storage_path)
+
+                    # Save to temporary file
+                    local_path = os.path.join(temp_dir, annot_filename)
+                    with open(local_path, 'wb') as f:
+                        f.write(response)
+
+                    annot_files[hemi] = local_path
+                    print(f"✅ Downloaded {annot_filename}")
+                    downloaded = True
+                    break  # Success, stop trying other filenames
+
+                except Exception as e:
+                    last_error = e
+                    continue  # Try next filename pattern
+
+            if not downloaded:
+                raise FileNotFoundError(
+                    f"Could not download annotation file for {hemi} hemisphere. "
+                    f"Tried: {', '.join(possible_filenames)}. "
+                    f"Last error: {str(last_error)}"
+                )
 
         # Parse annotation files and convert to JSON
         print(f"\n🔄 Converting annotation files to JSON...")
@@ -158,14 +198,15 @@ def generate_visualization_data(nifti_file_id, parcellation="aparc", **kwargs):
 # Command line interface for scientists
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description='Generate visualization data (JSON) from FreeSurfer outputs for frontend rendering'
+        description='Generate visualization data (JSON) from FreeSurfer/FastSurfer outputs for frontend rendering'
     )
-    parser.add_argument('file_id', help='NIFTI file ID whose FreeSurfer outputs to process')
+    parser.add_argument('file_id', help='NIFTI file ID whose FreeSurfer/FastSurfer outputs to process')
     parser.add_argument(
         '--parcellation',
         default='aparc',
-        help='FreeSurfer parcellation type. Standard: aparc, aparc.DKTatlas, aparc.a2009s. '
-             'Custom: custom_regions_de_ki, custom_regions, mpm.vpnl, etc. (default: aparc)'
+        help='Parcellation type (default: aparc). Standard: aparc, aparc.DKTatlas, aparc.a2009s. '
+             'Custom: custom_regions_de_ki, custom_regions, mpm.vpnl, etc. '
+             'Works with both FreeSurfer and FastSurfer naming conventions.'
     )
 
     args = parser.parse_args()
@@ -174,7 +215,8 @@ if __name__ == "__main__":
     print(f"Processing NIFTI file ID: {args.file_id}")
     print(f"Parcellation: {args.parcellation}")
     print("\nThis will:")
-    print("  1. Download FreeSurfer annotation files from freesurfer-outputs bucket")
+    print("  1. Download annotation files from freesurfer-outputs bucket")
+    print("     (supports both FreeSurfer and FastSurfer naming conventions)")
     print("  2. Convert them to JSON format for frontend")
     print("  3. Upload JSON files to freesurfer-outputs/{file_id}/visualization/")
     print("\nPlease wait...\n")

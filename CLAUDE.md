@@ -53,9 +53,9 @@ python -m functions.fastsurfer_parse_statistics FILE_ID FASTSURFER_OUTPUT_DIR
 
 # Complete workflow example
 FILE_ID=d7db5b0a-d967-4dcc-9c7d-43d8d4a48dc9
-python -m functions.fastsurfer_recon_all $FILE_ID --seg-only --subjects-dir ./fastsurfer_output
-python -m functions.fastsurfer_store_files $FILE_ID ./fastsurfer_output/sub-$FILE_ID --storage-mode essential
-python -m functions.fastsurfer_parse_statistics $FILE_ID ./fastsurfer_output/sub-$FILE_ID
+python -m functions.fastsurfer_recon_all $FILE_ID --seg-only --subjects-dir ./___fastsurfer_output
+python -m functions.fastsurfer_store_files $FILE_ID ./___fastsurfer_output/sub-$FILE_ID --storage-mode essential
+python -m functions.fastsurfer_parse_statistics $FILE_ID ./___fastsurfer_output/sub-$FILE_ID
 ```
 
 **FastSurfer Requirements**:

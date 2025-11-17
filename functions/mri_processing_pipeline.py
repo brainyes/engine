@@ -14,8 +14,6 @@ from functions.compare_to_population_norms import compare_to_population_norms
 
 # FastSurfer functions (default, ~10-20x faster)
 from functions.fastsurfer_recon_all import fastsurfer_recon_all
-from functions.fastsurfer_store_files import fastsurfer_store_files
-from functions.fastsurfer_parse_statistics import fastsurfer_parse_statistics
 
 # FreeSurfer functions (fallback)
 from functions.freesurfer_recon_all import freesurfer_recon_all
@@ -187,19 +185,11 @@ def mri_processing_pipeline(
         print("\n" + "="*80)
         print("SURFACE POST 2/5: Storing Surface Files")
         print("="*80)
-        if surface_pipeline == 'fastsurfer':
-            results['store_files'] = fastsurfer_store_files(
-                nifti_file_id=nifti_file_id,
-                fastsurfer_output_directory=surface_dir,
-                subject_id=subject_id,
-                storage_mode='essential'  # ~50MB instead of ~230MB
-            )
-        else:
-            results['store_files'] = freesurfer_store_files(
-                nifti_file_id=nifti_file_id,
-                freesurfer_output_directory=surface_dir,
-                subject_id=subject_id
-            )
+        results['store_files'] = freesurfer_store_files(
+            nifti_file_id=nifti_file_id,
+            freesurfer_output_directory=surface_dir,
+            subject_id=subject_id
+        )
         results['steps_completed'].append('store_files')
 
         # POST 3: Generate Surface Files (.asc)
@@ -217,23 +207,16 @@ def mri_processing_pipeline(
         print("\n" + "="*80)
         print("SURFACE POST 4/5: Parsing Statistics")
         print("="*80)
-        if surface_pipeline == 'fastsurfer':
-            results['parse_statistics'] = fastsurfer_parse_statistics(
-                nifti_file_id=nifti_file_id,
-                fastsurfer_output_directory=surface_dir,
-                subject_id=subject_id
-            )
-        else:
-            results['parse_statistics'] = freesurfer_parse_statistics(
-                nifti_file_id=nifti_file_id,
-                freesurfer_output_directory=surface_dir,
-                subject_id=subject_id
-            )
+        results['parse_statistics'] = freesurfer_parse_statistics(
+            nifti_file_id=nifti_file_id,
+            freesurfer_output_directory=surface_dir,
+            subject_id=subject_id
+        )
         results['steps_completed'].append('parse_statistics')
 
         # POST 5: Generate Visualization Data
         print("\n" + "="*80)
-        print("SURFACE POST 5/5: Generating Visualization Data")
+        print("SURFACE POST 5/5: Generating Visualization Data from FreeSurfer output")
         print("="*80)
         results['visualization'] = generate_visualization_data(
             nifti_file_id=nifti_file_id,
@@ -301,19 +284,14 @@ if __name__ == "__main__":
     if args.surface_pipeline == 'fastsurfer':
         print("\nSurface post-processing with FastSurfer (DEFAULT, 10-20x faster):")
         print("  a. FastSurfer recon-all (60-90 minutes)")
-        print("  b. Store FastSurfer files (~1 min)")
-        print("  c. Generate surface files (.asc) (~1 min)")
-        print("  d. Parse statistics (~30s)")
-        print("  e. Generate visualization data (aparc) (~30s)")
-        print("\nTotal expected time: ~75-105 minutes (dominated by FastSurfer recon-all)")
     else:
         print("\nSurface post-processing with FreeSurfer (SLOWER, traditional):")
         print("  a. FreeSurfer recon-all (4-8 hours)")
-        print("  b. Store FreeSurfer files (~1 min)")
-        print("  c. Generate surface files (.asc) (~1 min)")
-        print("  d. Parse statistics (~30s)")
-        print("  e. Generate visualization data (aparc) (~30s)")
-        print("\nTotal expected time: 4-8 hours (dominated by FreeSurfer recon-all)")
+
+    print("  b. Store FastSurfer files (~1 min)")
+    print("  c. Generate surface files (.asc) (~1 min)")
+    print("  d. Parse statistics (~30s)")
+    print("  e. Generate visualization data (aparc) (~30s)")
 
     print("\nAtlases: All available (Harvard-Oxford, HCPex)")
     print("All steps run directly without API calls\n")

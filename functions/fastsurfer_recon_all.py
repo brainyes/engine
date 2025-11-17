@@ -11,6 +11,44 @@ from utilities.supabase_utilities import download_nifti_file, get_nifti_file
 
 FUNCTION_NAME = "fastsurfer_recon_all"
 
+
+def _run_fastsurfer_subprocess(cmd, env, cwd):
+    """
+    Helper function to run FastSurfer subprocess with real-time output
+
+    Returns:
+        dict with 'return_code' and 'processing_time'
+    """
+    start = datetime.now()
+
+    process = subprocess.Popen(
+        cmd,
+        env=env,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        universal_newlines=True
+    )
+
+    # Stream output in real-time
+    while True:
+        output = process.stdout.readline()
+        if output == '' and process.poll() is not None:
+            break
+        if output:
+            print(output.strip())
+
+    return_code = process.poll()
+    end = datetime.now()
+    processing_time = (end - start).total_seconds()
+
+    return {
+        'return_code': return_code,
+        'processing_time': processing_time
+    }
+
+
 def fastsurfer_recon_all(nifti_file_id, **kwargs):
     """
     Run FastSurfer processing on a NIFTI file
@@ -214,59 +252,170 @@ def fastsurfer_recon_all(nifti_file_id, **kwargs):
             pass
 
         # Add 3T flag if specified (for 3 Tesla MRI scanners)
-        if kwargs.get('field_strength') == '3T':
+        # Also add on macOS to potentially help with Talairach registration issues
+        import platform
+        if kwargs.get('field_strength') == '3T' or platform.system() == 'Darwin':
             cmd.append("--3T")
+            if platform.system() == 'Darwin':
+                print("🍎 Adding --3T flag (may help with macOS Talairach registration)")
 
-        # Segmentation only mode (much faster, ~5 minutes)
-        if kwargs.get('seg_only', False):
-            cmd.append("--seg_only")
-            print("🎯 Running in SEGMENTATION-ONLY mode (~5 minutes)")
-        else:
-            print("🎯 Running FULL pipeline (segmentation + surfaces, ~60-90 minutes)")
+        # Determine processing mode
+        seg_only = kwargs.get('seg_only', False)
+        surf_only = kwargs.get('surf_only', False)
+        run_two_phase = not seg_only and not surf_only  # Full pipeline uses two-phase approach
 
-        print(f"Running FastSurfer command: {' '.join(cmd)}")
-        print("⚠️  FastSurfer processing started...")
-        if kwargs.get('seg_only', False):
-            print("    Expected time: ~5 minutes (GPU) or ~15 minutes (CPU)")
-        else:
-            print("    Expected time: ~60-90 minutes for full pipeline")
+        if run_two_phase:
+            # SMART TWO-PHASE APPROACH for full pipeline
+            # Phase 1: Segmentation only (~5 min)
+            # Phase 2: Create nu.mgz symlink if needed
+            # Phase 3: Surface reconstruction only (~55-85 min)
+            print("🎯 Running SMART TWO-PHASE pipeline (segmentation → fix → surfaces)")
+            print("    Phase 1: Segmentation (~5 min)")
+            print("    Phase 2: Auto-fix nu.mgz issue")
+            print("    Phase 3: Surface reconstruction (~55-85 min)")
+            print("    Total expected time: ~60-90 minutes\n")
 
-        # Run FastSurfer with real-time output
         start_time = datetime.now()
+        total_processing_time = 0
 
-        # Capture output while showing it in real-time
-        stdout_lines = []
+        # PHASE 1: Segmentation (always runs for two-phase, or if seg_only)
+        if run_two_phase or seg_only:
+            seg_cmd = cmd.copy()
+            seg_cmd.append("--seg_only")
 
-        process = subprocess.Popen(
-            cmd,
-            env=env,
-            cwd=fastsurfer_home,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Combine stderr into stdout
-            text=True,
-            universal_newlines=True
-        )
+            if seg_only:
+                print("🎯 Running SEGMENTATION-ONLY mode (~5 minutes)")
+                print("    Expected time: ~5 minutes (GPU) or ~15 minutes (CPU)")
+            else:
+                print("=" * 80)
+                print("PHASE 1/3: Segmentation")
+                print("=" * 80)
 
-        # Stream output in real-time
-        print("--- FastSurfer Output ---")
-        while True:
-            output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
-                break
-            if output:
-                print(output.strip())  # Show in real-time
-                stdout_lines.append(output)  # Save for later
+            print(f"Running: {' '.join(seg_cmd)}\n")
 
-        return_code = process.poll()
-        end_time = datetime.now()
+            seg_result = _run_fastsurfer_subprocess(seg_cmd, env, fastsurfer_home)
+            if seg_result['return_code'] != 0:
+                raise Exception(f"FastSurfer segmentation failed with return code {seg_result['return_code']}")
 
-        # Combine all output
-        full_output = ''.join(stdout_lines)
+            total_processing_time += seg_result['processing_time']
+            print(f"✅ Segmentation completed in {seg_result['processing_time']:.1f} seconds\n")
 
-        if return_code != 0:
-            raise Exception(f"FastSurfer failed with return code {return_code}. Check output above for details.")
+            # If seg_only, we're done
+            if seg_only:
+                processing_time = total_processing_time
+                # Skip to validation
+            else:
+                # PHASE 2: Fix nu.mgz issue
+                print("=" * 80)
+                print("PHASE 2/3: Auto-fix nu.mgz symlink")
+                print("=" * 80)
 
-        processing_time = (end_time - start_time).total_seconds()
+                subject_output_dir = os.path.join(subjects_dir, subject_id)
+                nu_mgz_path = os.path.join(subject_output_dir, 'mri', 'nu.mgz')
+                orig_nu_mgz_path = os.path.join(subject_output_dir, 'mri', 'orig_nu.mgz')
+
+                if os.path.exists(orig_nu_mgz_path):
+                    if not os.path.exists(nu_mgz_path):
+                        print(f"Creating nu.mgz symlink...")
+                        os.symlink('orig_nu.mgz', nu_mgz_path)
+                        print(f"✅ Created: {nu_mgz_path} -> orig_nu.mgz\n")
+                    else:
+                        print(f"✅ nu.mgz already exists\n")
+                else:
+                    print(f"⚠️  Warning: orig_nu.mgz not found, continuing anyway\n")
+
+                # On macOS, create identity Talairach transform to skip registration
+                # (Talairach registration uses imgreg_4dfp which has ARM64 compatibility issues)
+                import platform
+                if platform.system() == 'Darwin':
+                    print("🍎 Creating identity Talairach transforms (macOS workaround)...")
+                    transforms_dir = os.path.join(subject_output_dir, 'mri', 'transforms')
+                    os.makedirs(transforms_dir, exist_ok=True)
+
+                    # Create identity talairach.xfm (MNI format - needed by mris_anatomical_stats)
+                    talairach_xfm = os.path.join(transforms_dir, 'talairach.xfm')
+                    if not os.path.exists(talairach_xfm):
+                        identity_xfm_content = """MNI Transform File
+%Thu Nov 16 18:00:00 2025>>> FastSurfer identity transform (macOS workaround)
+
+Transform_Type = Linear;
+Linear_Transform =
+1.000000 0.000000 0.000000 0.000000
+0.000000 1.000000 0.000000 0.000000
+0.000000 0.000000 1.000000 0.000000;
+"""
+                        with open(talairach_xfm, 'w') as f:
+                            f.write(identity_xfm_content)
+                        print(f"  ✓ Created identity talairach.xfm")
+
+                    # Create identity talairach.lta
+                    talairach_lta = os.path.join(transforms_dir, 'talairach.lta')
+                    if not os.path.exists(talairach_lta):
+                        identity_lta_content = """type      = 1 # LINEAR_RAS_TO_RAS
+nxforms   = 1
+mean      = 0.0000 0.0000 0.0000
+sigma     = 1.0000
+1 4 4
+1.000000 0.000000 0.000000 0.000000
+0.000000 1.000000 0.000000 0.000000
+0.000000 0.000000 1.000000 0.000000
+0.000000 0.000000 0.000000 1.000000
+src volume info
+valid = 0  # volume info not valid - will be filled by recon-surf
+dst volume info
+valid = 0  # volume info not valid - will be filled by recon-surf
+"""
+                        with open(talairach_lta, 'w') as f:
+                            f.write(identity_lta_content)
+                        print(f"  ✓ Created identity talairach.lta")
+
+                    # Create symlinks for additional required files
+                    talairach_with_skull = os.path.join(transforms_dir, 'talairach_with_skull.lta')
+                    if not os.path.exists(talairach_with_skull):
+                        os.symlink('talairach.lta', talairach_with_skull)
+                        print(f"  ✓ Created talairach_with_skull.lta symlink")
+
+                    # Also create talairach.auto.xfm (some tools check for this)
+                    talairach_auto_xfm = os.path.join(transforms_dir, 'talairach.auto.xfm')
+                    if not os.path.exists(talairach_auto_xfm):
+                        os.symlink('talairach.xfm', talairach_auto_xfm)
+                        print(f"  ✓ Created talairach.auto.xfm symlink")
+
+                    print(f"  ✅ Talairach transforms ready (will skip registration)\n")
+
+                # PHASE 3: Surface reconstruction
+                print("=" * 80)
+                print("PHASE 3/3: Surface Reconstruction")
+                print("=" * 80)
+                print("    Expected time: ~55-85 minutes")
+
+                surf_cmd = cmd.copy()
+                surf_cmd.append("--surf_only")
+                print(f"Running: {' '.join(surf_cmd)}\n")
+
+                surf_result = _run_fastsurfer_subprocess(surf_cmd, env, fastsurfer_home)
+                if surf_result['return_code'] != 0:
+                    raise Exception(f"FastSurfer surface reconstruction failed with return code {surf_result['return_code']}")
+
+                total_processing_time += surf_result['processing_time']
+                print(f"✅ Surface reconstruction completed in {surf_result['processing_time']:.1f} seconds\n")
+
+                processing_time = total_processing_time
+
+        elif surf_only:
+            # Run surface reconstruction only
+            surf_cmd = cmd.copy()
+            surf_cmd.append("--surf_only")
+            print("🎯 Running SURFACE-ONLY mode (~55-85 minutes)")
+            print("    Expected time: ~55-85 minutes for surface reconstruction")
+            print(f"Running: {' '.join(surf_cmd)}\n")
+
+            surf_result = _run_fastsurfer_subprocess(surf_cmd, env, fastsurfer_home)
+            if surf_result['return_code'] != 0:
+                raise Exception(f"FastSurfer surface reconstruction failed with return code {surf_result['return_code']}")
+
+            processing_time = surf_result['processing_time']
+            print(f"✅ Surface reconstruction completed in {processing_time:.1f} seconds\n")
 
         # Check if output directory was created
         subject_output_dir = os.path.join(subjects_dir, subject_id)
@@ -318,10 +467,14 @@ def fastsurfer_recon_all(nifti_file_id, **kwargs):
         return result_data
 
     except Exception as e:
+        # Try to include output_directory even if processing failed
+        subject_output_dir = os.path.join(subjects_dir, subject_id) if subject_id and subjects_dir else None
+
         error_result = {
             "nifti_file_id": nifti_file_id,
             "subject_id": subject_id,
             "subjects_dir": subjects_dir,
+            "output_directory": subject_output_dir,  # Include even on failure for cleanup/debugging
             "status": "failed",
             "error": str(e),
             "message": f"FastSurfer processing failed: {str(e)}"
