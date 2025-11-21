@@ -119,14 +119,25 @@ def fastsurfer_recon_all(nifti_file_id, **kwargs):
         # Use FreeSurfer 7 for FastSurfer compatibility
         freesurfer7_home = os.environ.get('FREESURFER7_HOME', '/usr/local/freesurfer/7.4.1')
 
-        # On macOS, try to detect FreeSurfer 7 installation
+        # Try to detect FreeSurfer 7 installation in common locations
         if not os.path.exists(freesurfer7_home):
-            # Common macOS installation paths
+            # Common installation paths across different platforms
             possible_paths = [
+                # macOS
                 '/Applications/freesurfer/7.4.1',
                 '/Applications/freesurfer/7.3.2',
+                '/Applications/freesurfer/7.2.0',
+                # Linux/Unix standard locations
                 '/usr/local/freesurfer/7.4.1',
-                '/usr/local/freesurfer/7.3.2'
+                '/usr/local/freesurfer/7.3.2',
+                '/usr/local/freesurfer/7.2.0',
+                '/opt/freesurfer/7.4.1',
+                '/opt/freesurfer/7.3.2',
+                '/opt/freesurfer/7.2.0',
+                # User home directory installations
+                os.path.expanduser('~/freesurfer/7.4.1'),
+                os.path.expanduser('~/freesurfer/7.3.2'),
+                os.path.expanduser('~/freesurfer/7.2.0'),
             ]
             for path in possible_paths:
                 if os.path.exists(path):

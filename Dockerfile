@@ -1,6 +1,7 @@
-# Use Ubuntu 22.04 for FreeSurfer compatibility
-# Force amd64 platform as FreeSurfer only supports x86_64
-FROM --platform=linux/amd64 ubuntu:22.04
+# ============================================
+# Stage 1: System base with dependencies
+# ============================================
+FROM --platform=linux/amd64 ubuntu:22.04 AS system-base
 
 # Build argument for S3 bucket name
 ARG BUILD_ASSETS_BUCKET=brainyes-build-assets
@@ -11,18 +12,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install software-properties-common for add-apt-repository
 RUN apt-get update && apt-get install -y \
     software-properties-common \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Add deadsnakes PPA for Python 3.12
 RUN add-apt-repository ppa:deadsnakes/ppa -y
 
-# Install system dependencies
+# Install system dependencies needed for FreeSurfer installation and runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.12 \
-    python3.12-venv \
-    python3.12-dev \
-    python3-pip \
-    wget \
     dcm2niix \
     libgomp1 \
     libglu1-mesa \
@@ -44,15 +41,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# ===== FreeSurfer 8 Installation =====
-# Copy FreeSurfer 8 .deb file if it exists (downloaded by buildspec or provided locally)
-# Wildcard prevents failure if missing
+
+# ============================================
+# Stage 2a: FreeSurfer 8 installation
+# ============================================
+FROM system-base AS freesurfer-8
+
+# Copy FreeSurfer 8 .deb file (wildcard prevents failure if missing)
 COPY freesurfer_ubuntu22-8.1.0_amd64.deb* .
 
 # Download from Harvard server if not present locally (fallback)
 RUN if [ ! -f freesurfer_ubuntu22-8.1.0_amd64.deb ]; then \
       echo "FreeSurfer 8 package not found locally, downloading from Harvard server..."; \
-      wget -q https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb; \
+      wget --timeout=600 --tries=3 --progress=dot:giga \
+        https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb || \
+        (echo "ERROR: Failed to download FreeSurfer 8 from Harvard server" && exit 1); \
     else \
       echo "Using local FreeSurfer 8 package"; \
     fi
@@ -61,21 +64,48 @@ RUN if [ ! -f freesurfer_ubuntu22-8.1.0_amd64.deb ]; then \
 RUN apt-get update && \
     apt-get install -y ./freesurfer_ubuntu22-8.1.0_amd64.deb && \
     rm freesurfer_ubuntu22-8.1.0_amd64.deb && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Set FreeSurfer 8 environment variables (default)
+# Set FreeSurfer 8 environment variables
 ENV FREESURFER_HOME=/usr/local/freesurfer/8.1.0
 ENV FREESURFER=$FREESURFER_HOME
 ENV PATH=$FREESURFER_HOME/bin:$PATH
+ENV FS_LICENSE=$FREESURFER_HOME/license.txt
 
-# ===== FreeSurfer 7 Installation (for FastSurfer) =====
-# Copy FreeSurfer 7 .deb file if it exists
+# Copy FreeSurfer license file
+COPY freesurfer_license.txt $FREESURFER_HOME/license.txt
+
+# Clean up FreeSurfer installation - remove unnecessary files
+RUN cd $FREESURFER_HOME && \
+    # Remove example subjects (keep fsaverage which is needed as template)
+    find subjects -mindepth 1 -maxdepth 1 -type d ! -name 'fsaverage*' -exec rm -rf {} + 2>/dev/null || true && \
+    # Remove tractography training data
+    rm -rf trctrain 2>/dev/null || true && \
+    # Remove documentation
+    rm -rf docs 2>/dev/null || true && \
+    # Remove source code if present
+    rm -rf src 2>/dev/null || true && \
+    # Remove language packs except English
+    find . -type d -name 'locale' -exec sh -c 'cd {} && ls -1 | grep -v en | xargs rm -rf' \; 2>/dev/null || true && \
+    # Remove man pages
+    rm -rf man 2>/dev/null || true
+
+
+# ============================================
+# Stage 2b: FreeSurfer 7 installation (for FastSurfer)
+# ============================================
+FROM system-base AS freesurfer-7
+
+# Copy FreeSurfer 7 .deb file (wildcard prevents failure if missing)
 COPY freesurfer_ubuntu22-7.4.1_amd64.deb* .
 
-# Download FreeSurfer 7.4.1 if not present locally (fallback)
+# Download from Harvard server if not present locally (fallback)
 RUN if [ ! -f freesurfer_ubuntu22-7.4.1_amd64.deb ]; then \
       echo "FreeSurfer 7 package not found locally, downloading from Harvard server..."; \
-      wget -q https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/7.4.1/freesurfer_ubuntu22-7.4.1_amd64.deb; \
+      wget --timeout=300 --tries=3 --progress=dot:giga \
+        https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/7.4.1/freesurfer_ubuntu22-7.4.1_amd64.deb || \
+        (echo "ERROR: Failed to download FreeSurfer 7 from Harvard server" && exit 1); \
     else \
       echo "Using local FreeSurfer 7 package"; \
     fi
@@ -84,27 +114,111 @@ RUN if [ ! -f freesurfer_ubuntu22-7.4.1_amd64.deb ]; then \
 RUN apt-get update && \
     apt-get install -y ./freesurfer_ubuntu22-7.4.1_amd64.deb && \
     rm freesurfer_ubuntu22-7.4.1_amd64.deb && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Set FreeSurfer 7 environment variables (for FastSurfer compatibility)
-ENV FREESURFER7_HOME=/usr/local/freesurfer/7.4.1
-
-# Copy FreeSurfer license file to both versions
+# Set FreeSurfer 7 environment variables
+ENV FREESURFER_HOME=/usr/local/freesurfer/7.4.1
+ENV FREESURFER=$FREESURFER_HOME
+ENV FREESURFER7_HOME=$FREESURFER_HOME
+ENV PATH=$FREESURFER_HOME/bin:$PATH
 ENV FS_LICENSE=$FREESURFER_HOME/license.txt
+
+# Copy FreeSurfer license file
 COPY freesurfer_license.txt $FREESURFER_HOME/license.txt
-COPY freesurfer_license.txt $FREESURFER7_HOME/license.txt
+
+# Clean up FreeSurfer installation - remove unnecessary files
+RUN cd $FREESURFER_HOME && \
+    # Remove example subjects (keep fsaverage which is needed as template)
+    find subjects -mindepth 1 -maxdepth 1 -type d ! -name 'fsaverage*' -exec rm -rf {} + 2>/dev/null || true && \
+    # Remove tractography training data
+    rm -rf trctrain 2>/dev/null || true && \
+    # Remove documentation
+    rm -rf docs 2>/dev/null || true && \
+    # Remove source code if present
+    rm -rf src 2>/dev/null || true && \
+    # Remove language packs except English
+    find . -type d -name 'locale' -exec sh -c 'cd {} && ls -1 | grep -v en | xargs rm -rf' \; 2>/dev/null || true && \
+    # Remove man pages
+    rm -rf man 2>/dev/null || true
+
+
+# ============================================
+# Stage 3a: Python builder (FreeSurfer 8)
+# ============================================
+FROM freesurfer-8 AS python-builder-8
+
+# Install Python and build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    gcc \
+    g++ \
+    make \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create virtual environment and install Python dependencies
+WORKDIR /tmp
+COPY requirements.txt .
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt && \
+    rm -rf /root/.cache/pip /tmp/* /var/tmp/* && \
+    find /opt/venv -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
+    find /opt/venv -type f -name '*.pyc' -delete 2>/dev/null || true
+
+
+# ============================================
+# Stage 3b: Python builder (FreeSurfer 7)
+# ============================================
+FROM freesurfer-7 AS python-builder-7
+
+# Install Python and build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    gcc \
+    g++ \
+    make \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create virtual environment and install Python dependencies
+WORKDIR /tmp
+COPY requirements.txt .
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt && \
+    rm -rf /root/.cache/pip /tmp/* /var/tmp/* && \
+    find /opt/venv -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
+    find /opt/venv -type f -name '*.pyc' -delete 2>/dev/null || true
+
+
+# ============================================
+# Stage 4a: Final runtime (FreeSurfer 8, default)
+# ============================================
+FROM freesurfer-8 AS runtime
+
+# Install only Python runtime (no dev tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Copy Python virtual environment from builder
+COPY --from=python-builder-8 /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Create app directory
 WORKDIR /app
-
-# Copy requirements first for better caching
-COPY requirements.txt .
-
-# Create virtual environment and install Python dependencies
-RUN python3.12 -m venv /app/venv
-ENV PATH="/app/venv/bin:$PATH"
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY functions/ ./functions/
@@ -120,7 +234,49 @@ COPY FastSurfer/ ./FastSurfer/
 ENV FASTSURFER_HOME=/app/FastSurfer
 
 # Create a non-root user
-RUN useradd -m -s /bin/bash brainyes
+RUN useradd -m -s /bin/bash brainyes && \
+    chown -R brainyes:brainyes /app
+USER brainyes
+
+# Set the entrypoint
+ENTRYPOINT ["python3.12", "handlers/ecs_handler.py"]
+
+
+# ============================================
+# Stage 4b: Final runtime (FreeSurfer 7)
+# ============================================
+FROM freesurfer-7 AS runtime-7
+
+# Install only Python runtime (no dev tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Copy Python virtual environment from builder
+COPY --from=python-builder-7 /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create app directory
+WORKDIR /app
+
+# Copy application code
+COPY functions/ ./functions/
+COPY utilities/ ./utilities/
+COPY insights/ ./insights/
+COPY handlers/ ./handlers/
+COPY research/input/ ./research/input/
+
+# Copy FastSurfer submodule
+COPY FastSurfer/ ./FastSurfer/
+
+# Set FastSurfer environment variable
+ENV FASTSURFER_HOME=/app/FastSurfer
+
+# Create a non-root user
+RUN useradd -m -s /bin/bash brainyes && \
+    chown -R brainyes:brainyes /app
 USER brainyes
 
 # Set the entrypoint

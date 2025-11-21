@@ -168,6 +168,12 @@ node_modules/
 # SAM build artifacts
 .aws-sam/
 
+# BrainYes
 freesurfer_ubuntu22-8.1.0_amd64.deb
-
+freesurfer_ubuntu22-7.4.1_amd64.deb
 research/input/datasets
+research/input/preprocessed
+research/input/raw
+research/input/sub-OASIS10001_*
+FastSurfer/fastsurfer_output
+__*
