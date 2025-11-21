@@ -310,9 +310,9 @@ Resources:
           Status: Enabled
           Tierings:
             - AccessTier: ARCHIVE_ACCESS
-              Days: 7
-            - AccessTier: DEEP_ARCHIVE_ACCESS
               Days: 90
+            - AccessTier: DEEP_ARCHIVE_ACCESS
+              Days: 180
       # Lifecycle policy to optimize costs
       LifecycleConfiguration:
         Rules:
