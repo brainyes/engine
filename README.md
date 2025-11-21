@@ -26,3 +26,15 @@ sam deploy --profile brainyes -t codepipeline.yaml --parameter-overrides Supabas
   docker build --target runtime .        # Builds FS 8 path only
   docker build --target runtime-7 .      # Builds FS 7 path only
 ```
+
+### Prebuilt FreeSurfer base images (build once, reuse)
+These images contain FreeSurfer only; build and push once, then reuse in app builds:
+```shell
+# FreeSurfer 7 base
+docker build --target freesurfer-7-build -t <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/freesurfer:7 .
+docker push <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/freesurfer:7
+
+# FreeSurfer 8 base (if needed)
+docker build --target freesurfer-8-build -t <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/freesurfer:8 .
+docker push <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/freesurfer:8
+```

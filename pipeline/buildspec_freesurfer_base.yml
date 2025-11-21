@@ -1,0 +1,21 @@
+version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $FREESURFER_IMAGE_REPOSITORY
+      - echo Preparing presigned URL for FreeSurfer 7 .deb from S3 (fallback to Harvard in Dockerfile)...
+      - FS7_DEB_URL=$(aws s3 presign s3://$BUILD_ASSETS_BUCKET/freesurfer_ubuntu22-7.4.1_amd64.deb --expires-in 3600 --region $AWS_DEFAULT_REGION || true)
+      - export FS7_DEB_URL
+      - echo Build started on `date`
+  build:
+    commands:
+      - echo Building FreeSurfer 7 base image...
+      - export DOCKER_BUILDKIT=1
+      - docker build -f Dockerfile --target freesurfer-7-build -t $FREESURFER_IMAGE_REPOSITORY:7 --build-arg FS7_DEB_URL=$FS7_DEB_URL .
+      - docker tag $FREESURFER_IMAGE_REPOSITORY:7 $FREESURFER_IMAGE_REPOSITORY:7-$CODEBUILD_BUILD_NUMBER
+  post_build:
+    commands:
+      - echo Pushing FreeSurfer base images...
+      - docker push $FREESURFER_IMAGE_REPOSITORY:7
+      - docker push $FREESURFER_IMAGE_REPOSITORY:7-$CODEBUILD_BUILD_NUMBER

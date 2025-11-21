@@ -43,9 +43,6 @@ Parameters:
   TestingRegion:
     Type: String
     Default: "us-east-2"
-  TestingStackName:
-    Type: String
-    Default: "test-brainyes-engine"
   TestingPipelineExecutionRole:
     Type: String
     Default: "arn:aws:iam::<AWS_ACCOUNT_ID>:role/aws-sam-cli-managed-test-pipe-PipelineExecutionRole-LtswrOGxYqtX"
@@ -64,12 +61,6 @@ Parameters:
   ProdStackName:
     Type: String
     Default: "brainyes-engine"
-  ProdPipelineExecutionRole:
-    Type: String
-    Default: ""
-  ProdCloudFormationExecutionExeRole:
-    Type: String
-    Default: "arn:aws:iam::<AWS_ACCOUNT_ID>:role/aws-sam-cli-managed-produ-CloudFormationExecutionRo-6WmZzLESG0QJ"
   ProdArtifactBucket:
     Type: String
     Default: "aws-sam-cli-managed-default-samclisourcebucket-hcvatmsrdbao"
@@ -167,6 +158,33 @@ Resources:
             ]
           }
 
+  # ECR Repository for FreeSurfer base images
+  FreesurferECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: freesurfer
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
   #   ____
   # / ___|  ___  _   _ _ __ ___ ___
   # \___ \ / _ \| | | | '__/ __/ _ \
@@ -203,9 +221,17 @@ Resources:
                 Provider: CodeStarSourceConnection
                 Version: "1"
               Configuration:
-                ConnectionArn: !If [CreateConnection, !Ref CodeStarConnection, !Ref CodeStarConnectionArn]
+                ConnectionArn:
+                  Fn::If:
+                    - CreateConnection
+                    - !Ref CodeStarConnection
+                    - !Ref CodeStarConnectionArn
                 FullRepositoryId: !Ref FullRepositoryId
-                BranchName: !If [IsFeatureBranchPipeline, !Ref FeatureGitBranch, !Ref MainGitBranch]
+                BranchName:
+                  Fn::If:
+                    - IsFeatureBranchPipeline
+                    - !Ref FeatureGitBranch
+                    - !Ref MainGitBranch
               OutputArtifacts:
                 - Name: SourceCodeAsZip
               RunOrder: 1
@@ -263,23 +289,23 @@ Resources:
         #       InputArtifacts:
         #         - Name: SourceCodeAsZip
 
-        - !If
+        - Fn::If:
           - IsFeatureBranchPipeline
           - Name: BuildAndDeployFeatureStack
             Actions:
-              - Name: CodeBuild
-                ActionTypeId:
-                  Category: Build
-                  Owner: AWS
-                  Provider: CodeBuild
-                  Version: "1"
-                Configuration:
-                  ProjectName: !Ref CodeBuildProjectBuildAndDeployFeature
-                InputArtifacts:
-                  - Name: SourceCodeAsZip
+                - Name: CodeBuild
+                  ActionTypeId:
+                    Category: Build
+                    Owner: AWS
+                    Provider: CodeBuild
+                    Version: "1"
+                  Configuration:
+                    ProjectName: !Ref CodeBuildProjectBuildAndDeployFeature
+                  InputArtifacts:
+                    - Name: SourceCodeAsZip
           - !Ref AWS::NoValue
 
-        - !If
+        - Fn::If:
           - IsMainBranchPipeline
           - Name: BuildAndPackage
             Actions:
@@ -372,7 +398,7 @@ Resources:
                   - Name: BuildArtifactAsZip
           - !Ref AWS::NoValue
 
-        - !If
+        - Fn::If:
           - IsMainBranchPipeline
           - Name: BuildEngine
             Actions:
@@ -392,7 +418,6 @@ Resources:
                   Owner: AWS
                   Provider: CodeBuild
                   Version: "1"
-                RunOrder: 2
                 Configuration:
                   ProjectName: !Ref CodeBuildProjectEngineImage
                   EnvironmentVariables: !Sub |
@@ -402,6 +427,40 @@ Resources:
                       {"name": "AWS_ACCOUNT_ID", "value": "${AWS::AccountId}"},
                       {"name": "STACK_NAME", "value": "${ProdStackName}"}
                     ]
+                RunOrder: 2
+                InputArtifacts:
+                  - Name: SourceCodeAsZip
+          - !Ref AWS::NoValue
+
+        - Fn::If:
+          - IsMainBranchPipeline
+          - Name: BuildFreesurferBase
+            Actions:
+              - Name: ApproveFreesurferBaseBuild
+                ActionTypeId:
+                  Category: Approval
+                  Owner: AWS
+                  Provider: Manual
+                  Version: "1"
+                Configuration:
+                  NotificationArn: !Ref PipelineApprovalTopic
+                  CustomData: "Approve to build and push FreeSurfer base image (FS7 build target)"
+                RunOrder: 1
+              - Name: BuildFreesurferBaseImage
+                ActionTypeId:
+                  Category: Build
+                  Owner: AWS
+                  Provider: CodeBuild
+                  Version: "1"
+                Configuration:
+                  ProjectName: !Ref CodeBuildProjectFreesurferBase
+                  EnvironmentVariables: !Sub |
+                    [
+                      {"name": "FREESURFER_IMAGE_REPOSITORY", "value": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FreesurferECRRepository}"},
+                      {"name": "AWS_DEFAULT_REGION", "value": "${AWS::Region}"},
+                      {"name": "BUILD_ASSETS_BUCKET", "value": "${BuildAssetsBucket}"}
+                    ]
+                RunOrder: 2
                 InputArtifacts:
                   - Name: SourceCodeAsZip
           - !Ref AWS::NoValue
@@ -452,7 +511,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      AccessControl: "LogDeliveryWrite"
       OwnershipControls:
         Rules:
           - ObjectOwnership:  ObjectWriter
@@ -598,6 +656,10 @@ Resources:
                     - IsMainBranchPipeline
                     - !GetAtt CodeBuildProjectEngineImage.Arn
                     - !Ref AWS::NoValue
+                  - !If
+                    - IsMainBranchPipeline
+                    - !GetAtt CodeBuildProjectFreesurferBase.Arn
+                    - !Ref AWS::NoValue
               - Effect: Allow
                 Action:
                   - "cloudformation:CreateStack"
@@ -710,7 +772,6 @@ Resources:
                   - "s3:GetObject"
                   - "s3:GetObjectVersion"
                   - "s3:ListBucket"
-                  - "s3:HeadObject"
                 Resource:
                   - !Sub "${BuildAssetsBucket.Arn}/*"
                   - !GetAtt BuildAssetsBucket.Arn
@@ -735,7 +796,6 @@ Resources:
                   - ecr:BatchCheckLayerAvailability
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
-                  - ecr:BatchImportLayerPart
                   - ecr:UploadLayerPart
                   - ecr:InitiateLayerUpload
                   - ecr:CompleteLayerUpload
@@ -917,6 +977,25 @@ Resources:
         Type: CODEPIPELINE
         BuildSpec: pipeline/buildspec_engine.yml
 
+  CodeBuildProjectFreesurferBase:
+    Condition: IsMainBranchPipeline
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: BUILD_ASSETS_BUCKET
+            Value: !Ref BuildAssetsBucket
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec_freesurfer_base.yml
+
 Outputs:
   CodeStarConnectionArn:
     Condition: CreateConnection
@@ -930,3 +1009,7 @@ Outputs:
   EngineRepositoryUri:
     Description: URI for ECS Engine ECR repository  
     Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EngineECRRepository}
+
+  FreesurferRepositoryUri:
+    Description: URI for FreeSurfer base ECR repository
+    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FreesurferECRRepository}

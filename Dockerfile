@@ -43,22 +43,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 # ============================================
-# Stage 2a: FreeSurfer 8 installation
+# Stage 2a: FreeSurfer 8 installation (buildable base)
 # ============================================
-FROM system-base AS freesurfer-8
+FROM system-base AS freesurfer-8-build
 
-# Copy FreeSurfer 8 .deb file (wildcard prevents failure if missing)
-COPY freesurfer_ubuntu22-8.1.0_amd64.deb* .
+ARG FS8_DEB_URL="https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb"
 
-# Download from Harvard server if not present locally (fallback)
-RUN if [ ! -f freesurfer_ubuntu22-8.1.0_amd64.deb ]; then \
-      echo "FreeSurfer 8 package not found locally, downloading from Harvard server..."; \
-      wget --timeout=600 --tries=3 --progress=dot:giga \
-        https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/8.1.0/freesurfer_ubuntu22-8.1.0_amd64.deb || \
-        (echo "ERROR: Failed to download FreeSurfer 8 from Harvard server" && exit 1); \
-    else \
-      echo "Using local FreeSurfer 8 package"; \
-    fi
+# Download and install FreeSurfer 8 in a single layer to avoid shipping the .deb as a separate layer
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    set -eux; \
+    apt-get update; \
+    apt-get install -y wget ca-certificates; \
+    wget --timeout=600 --tries=5 --retry-connrefused --waitretry=5 --progress=dot:giga \
+      -O /tmp/freesurfer_ubuntu22-8.1.0_amd64.deb "${FS8_DEB_URL}"; \
+    apt-get install -y /tmp/freesurfer_ubuntu22-8.1.0_amd64.deb; \
+    rm -f /tmp/freesurfer_ubuntu22-8.1.0_amd64.deb; \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Install FreeSurfer 8
 RUN apt-get update && \
@@ -86,35 +87,43 @@ RUN cd $FREESURFER_HOME && \
     rm -rf docs 2>/dev/null || true && \
     # Remove source code if present
     rm -rf src 2>/dev/null || true && \
-    # Remove language packs except English
-    find . -type d -name 'locale' -exec sh -c 'cd {} && ls -1 | grep -v en | xargs rm -rf' \; 2>/dev/null || true && \
-    # Remove man pages
-    rm -rf man 2>/dev/null || true
+# Remove language packs except English
+find . -type d -name 'locale' -exec sh -c 'cd {} && ls -1 | grep -v en | xargs rm -rf' \; 2>/dev/null || true && \
+# Remove man pages
+rm -rf man 2>/dev/null || true
+
+# ============================================
+# Stage 2a (prebuilt base): FreeSurfer 8 pulled from ECR
+# Built/pushed as: <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/freesurfer:8
+# ============================================
+FROM <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/freesurfer:8 AS freesurfer-8
+
+# Ensure license is present for downstream stages
+ENV FREESURFER_HOME=/usr/local/freesurfer/8.1.0
+ENV FREESURFER=$FREESURFER_HOME
+ENV PATH=$FREESURFER_HOME/bin:$PATH
+ENV FS_LICENSE=$FREESURFER_HOME/license.txt
+COPY freesurfer_license.txt $FREESURFER_HOME/license.txt
 
 
 # ============================================
 # Stage 2b: FreeSurfer 7 installation (for FastSurfer)
+# Buildable base + prebuilt base option
 # ============================================
-FROM system-base AS freesurfer-7
+FROM system-base AS freesurfer-7-build
 
-# Copy FreeSurfer 7 .deb file (wildcard prevents failure if missing)
-COPY freesurfer_ubuntu22-7.4.1_amd64.deb* .
+ARG FS7_DEB_URL="https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/7.4.1/freesurfer_ubuntu22-7.4.1_amd64.deb"
 
-# Download from Harvard server if not present locally (fallback)
-RUN if [ ! -f freesurfer_ubuntu22-7.4.1_amd64.deb ]; then \
-      echo "FreeSurfer 7 package not found locally, downloading from Harvard server..."; \
-      wget --timeout=300 --tries=3 --progress=dot:giga \
-        https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/7.4.1/freesurfer_ubuntu22-7.4.1_amd64.deb || \
-        (echo "ERROR: Failed to download FreeSurfer 7 from Harvard server" && exit 1); \
-    else \
-      echo "Using local FreeSurfer 7 package"; \
-    fi
-
-# Install FreeSurfer 7
-RUN apt-get update && \
-    apt-get install -y ./freesurfer_ubuntu22-7.4.1_amd64.deb && \
-    rm freesurfer_ubuntu22-7.4.1_amd64.deb && \
-    apt-get clean && \
+# Download and install FreeSurfer 7 in a single layer to avoid shipping the .deb as a separate layer
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    set -eux; \
+    apt-get update; \
+    apt-get install -y wget ca-certificates; \
+    wget --timeout=300 --tries=5 --retry-connrefused --waitretry=5 --progress=dot:giga \
+      -O /tmp/freesurfer_ubuntu22-7.4.1_amd64.deb "${FS7_DEB_URL}"; \
+    apt-get install -y /tmp/freesurfer_ubuntu22-7.4.1_amd64.deb; \
+    rm -f /tmp/freesurfer_ubuntu22-7.4.1_amd64.deb; \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Set FreeSurfer 7 environment variables
@@ -141,6 +150,20 @@ RUN cd $FREESURFER_HOME && \
     find . -type d -name 'locale' -exec sh -c 'cd {} && ls -1 | grep -v en | xargs rm -rf' \; 2>/dev/null || true && \
     # Remove man pages
     rm -rf man 2>/dev/null || true
+
+# Prebuilt base that already contains FreeSurfer 7.4.1.
+# Built and pushed as: <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/freesurfer:7
+FROM <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/freesurfer:7 AS freesurfer-7-base
+
+# Set FreeSurfer 7 environment variables
+ENV FREESURFER_HOME=/usr/local/freesurfer/7.4.1
+ENV FREESURFER=$FREESURFER_HOME
+ENV FREESURFER7_HOME=$FREESURFER_HOME
+ENV PATH=$FREESURFER_HOME/bin:$PATH
+ENV FS_LICENSE=$FREESURFER_HOME/license.txt
+
+# Copy FreeSurfer license file
+COPY freesurfer_license.txt $FREESURFER_HOME/license.txt
 
 
 # ============================================
@@ -175,7 +198,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 # ============================================
 # Stage 3b: Python builder (FreeSurfer 7)
 # ============================================
-FROM freesurfer-7 AS python-builder-7
+FROM freesurfer-7-base AS python-builder-7
 
 # Install Python and build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -245,7 +268,7 @@ ENTRYPOINT ["python3.12", "handlers/ecs_handler.py"]
 # ============================================
 # Stage 4b: Final runtime (FreeSurfer 7)
 # ============================================
-FROM freesurfer-7 AS runtime-7
+FROM freesurfer-7-base AS runtime-7
 
 # Install only Python runtime (no dev tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
