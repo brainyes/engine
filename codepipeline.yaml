@@ -5,6 +5,7 @@ Description: >
   The following stages are predefined in this template:
   - Source
   - UpdatePipeline (applies codepipeline.yml stack updates. commented out, takes about 35s for no-change)
+  - BuildFreesurferBase (MainGitBranch only, requires manual approval)
   - BuildAndDeployFeatureStack (FeatureGitBranch only)
   - BuildAndPackage (MainGitBranch only)
   - DeployTest (MainGitBranch only) (disabled)
@@ -290,6 +291,39 @@ Resources:
         #         - Name: SourceCodeAsZip
 
         - Fn::If:
+          - IsMainBranchPipeline
+          - Name: BuildFreesurferBase
+            Actions:
+              - Name: ApproveFreesurferBaseBuild
+                ActionTypeId:
+                  Category: Approval
+                  Owner: AWS
+                  Provider: Manual
+                  Version: "1"
+                Configuration:
+                  NotificationArn: !Ref PipelineApprovalTopic
+                  CustomData: "Approve to build and push FreeSurfer base image (FS7 build target)"
+                RunOrder: 1
+              - Name: BuildFreesurferBaseImage
+                ActionTypeId:
+                  Category: Build
+                  Owner: AWS
+                  Provider: CodeBuild
+                  Version: "1"
+                Configuration:
+                  ProjectName: !Ref CodeBuildProjectFreesurferBase
+                  EnvironmentVariables: !Sub |
+                    [
+                      {"name": "FREESURFER_IMAGE_REPOSITORY", "value": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FreesurferECRRepository}"},
+                      {"name": "AWS_DEFAULT_REGION", "value": "${AWS::Region}"},
+                      {"name": "BUILD_ASSETS_BUCKET", "value": "${BuildAssetsBucket}"}
+                    ]
+                RunOrder: 2
+                InputArtifacts:
+                  - Name: SourceCodeAsZip
+          - !Ref AWS::NoValue
+
+        - Fn::If:
           - IsFeatureBranchPipeline
           - Name: BuildAndDeployFeatureStack
             Actions:
@@ -396,39 +430,6 @@ Resources:
                     ]
                 InputArtifacts:
                   - Name: BuildArtifactAsZip
-          - !Ref AWS::NoValue
-
-        - Fn::If:
-          - IsMainBranchPipeline
-          - Name: BuildFreesurferBase
-            Actions:
-              - Name: ApproveFreesurferBaseBuild
-                ActionTypeId:
-                  Category: Approval
-                  Owner: AWS
-                  Provider: Manual
-                  Version: "1"
-                Configuration:
-                  NotificationArn: !Ref PipelineApprovalTopic
-                  CustomData: "Approve to build and push FreeSurfer base image (FS7 build target)"
-                RunOrder: 1
-              - Name: BuildFreesurferBaseImage
-                ActionTypeId:
-                  Category: Build
-                  Owner: AWS
-                  Provider: CodeBuild
-                  Version: "1"
-                Configuration:
-                  ProjectName: !Ref CodeBuildProjectFreesurferBase
-                  EnvironmentVariables: !Sub |
-                    [
-                      {"name": "FREESURFER_IMAGE_REPOSITORY", "value": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FreesurferECRRepository}"},
-                      {"name": "AWS_DEFAULT_REGION", "value": "${AWS::Region}"},
-                      {"name": "BUILD_ASSETS_BUCKET", "value": "${BuildAssetsBucket}"}
-                    ]
-                RunOrder: 2
-                InputArtifacts:
-                  - Name: SourceCodeAsZip
           - !Ref AWS::NoValue
 
         - Fn::If:

@@ -38,7 +38,9 @@ def mri_processing_pipeline(
     Complete MRI processing pipeline - runs all functions locally/synchronously
     Designed to run in ECS Fargate with all dependencies available
 
-    Automatically processes with ALL available brain atlases.
+    Processes all available brain atlases:
+    - MNI-based atlases (Harvard-Oxford, HCPex) are processed in the initial pipeline
+    - FreeSurfer atlas is processed after recon-all completes (requires aparc+aseg.mgz)
 
     Args:
         nifti_file_id (str): The ID of the NIFTI file to process
@@ -83,11 +85,13 @@ def mri_processing_pipeline(
         results['registration'] = register_to_template(nifti_file_id)
         results['steps_completed'].append('register_to_template')
 
-        # STEP 3: Resample Atlas (all atlases)
+        # STEP 3: Resample Atlas (MNI-based atlases only, FreeSurfer atlas comes later)
         print("\n" + "="*80)
-        print(f"STEP 3/{CORE_PIPELINE_STEPS}: Resampling Atlases (all available)")
+        print(f"STEP 3/{CORE_PIPELINE_STEPS}: Resampling Atlases (MNI-based: Harvard-Oxford, HCPex)")
         print("="*80)
-        results['resample_atlas'] = resample_atlas_for_user_nifti(nifti_file_id)
+        # Use population_mode=True to skip FreeSurfer atlas (it requires FreeSurfer outputs that don't exist yet)
+        # FreeSurfer atlas will be processed after FreeSurfer recon-all completes
+        results['resample_atlas'] = resample_atlas_for_user_nifti(nifti_file_id, population_mode=True)
         results['steps_completed'].append('resample_atlas')
 
         # STEP 4: Calculate ROI Volumes (all atlases)
@@ -192,6 +196,31 @@ def mri_processing_pipeline(
         )
         results['steps_completed'].append('store_files')
 
+        # POST 2b: Process FreeSurfer Atlas (now that aparc+aseg.mgz is available)
+        print("\n" + "="*80)
+        print("SURFACE POST 2b/5: Resampling FreeSurfer Atlas")
+        print("="*80)
+        try:
+            # Now process the FreeSurfer atlas that was skipped earlier
+            freesurfer_atlas_result = resample_atlas_for_user_nifti(nifti_file_id, atlas_name='freesurfer')
+            if 'resample_atlas' not in results:
+                results['resample_atlas'] = {}
+            results['resample_atlas']['freesurfer'] = freesurfer_atlas_result
+            results['steps_completed'].append('resample_freesurfer_atlas')
+            print("  ✓ FreeSurfer atlas resampled successfully")
+
+            # Calculate ROI volumes for FreeSurfer atlas
+            print("\n📊 Calculating ROI volumes for FreeSurfer atlas...")
+            freesurfer_roi_result = calculate_roi_volumes(nifti_file_id, atlas_name='freesurfer')
+            if 'roi_volumes' not in results:
+                results['roi_volumes'] = {}
+            results['roi_volumes']['freesurfer'] = freesurfer_roi_result
+            print("  ✓ FreeSurfer ROI volumes calculated successfully")
+        except Exception as fs_atlas_error:
+            print(f"  ⚠️  FreeSurfer atlas processing failed: {str(fs_atlas_error)}")
+            print("     Continuing with remaining steps...")
+
+
         # POST 3: Generate Surface Files (.asc)
         print("\n" + "="*80)
         print("SURFACE POST 3/5: Generating Surface Files (.asc)")
@@ -271,15 +300,16 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+
     print("=== MRI PROCESSING PIPELINE (LOCAL) ===")
     print("This will run the complete processing pipeline in this process:")
     print("1. Preprocess native scan (~5 min)")
     print("2. Register to template (~5-10 min)")
-    print("3. Resample ALL atlases (~1 min)")
-    print("4. Calculate ROI volumes for ALL atlases (~1 min)")
+    print("3. Resample MNI-based atlases (Harvard-Oxford, HCPex) (~1 min)")
+    print("4. Calculate ROI volumes for MNI-based atlases (~1 min)")
     print("5. Prepare volume visualization (~30s)")
     print("6. Calculate memory metrics (~30s)")
-    print("7. Compare to population norms for ALL atlases (~1 min)")
+    print("7. Compare to population norms for MNI-based atlases (~1 min)")
 
     if args.surface_pipeline == 'fastsurfer':
         print("\nSurface post-processing with FastSurfer (DEFAULT, 10-20x faster):")
@@ -288,13 +318,15 @@ if __name__ == "__main__":
         print("\nSurface post-processing with FreeSurfer (SLOWER, traditional):")
         print("  a. FreeSurfer recon-all (4-8 hours)")
 
-    print("  b. Store FastSurfer files (~1 min)")
+    print("  b. Store surface files (~1 min)")
+    print("  b2. Process FreeSurfer atlas (resample + ROI volumes) (~2 min)")
     print("  c. Generate surface files (.asc) (~1 min)")
     print("  d. Parse statistics (~30s)")
     print("  e. Generate visualization data (aparc) (~30s)")
 
-    print("\nAtlases: All available (Harvard-Oxford, HCPex)")
+    print("\nAtlases: All available (Harvard-Oxford, HCPex initially, FreeSurfer after recon-all)")
     print("All steps run directly without API calls\n")
+
 
     try:
         result = mri_processing_pipeline(
