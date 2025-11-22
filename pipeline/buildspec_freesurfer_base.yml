@@ -4,7 +4,7 @@ phases:
     commands:
       - echo Logging in to Amazon ECR...
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $FREESURFER_IMAGE_REPOSITORY
-      - echo Preparing presigned URL for FreeSurfer 7 .deb from S3 (fallback to Harvard in Dockerfile)...
+      - echo "Preparing presigned URL for FreeSurfer 7 .deb from S3 (fallback to Harvard in Dockerfile)..."
       - FS7_DEB_URL=$(aws s3 presign s3://$BUILD_ASSETS_BUCKET/freesurfer_ubuntu22-7.4.1_amd64.deb --expires-in 3600 --region $AWS_DEFAULT_REGION || true)
       - export FS7_DEB_URL
       - echo Build started on `date`
