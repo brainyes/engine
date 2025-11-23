@@ -5,12 +5,14 @@ Description: >
   The following stages are predefined in this template:
   - Source
   - UpdatePipeline (applies codepipeline.yml stack updates. commented out, takes about 35s for no-change)
-  - BuildFreesurferBase (MainGitBranch only, requires manual approval)
   - BuildAndDeployFeatureStack (FeatureGitBranch only)
   - BuildAndPackage (MainGitBranch only)
   - DeployTest (MainGitBranch only) (disabled)
   - DeployProd (MainGitBranch only)
-  - BuildEngine (MainGitBranch only, requires manual approval)
+
+  NOTE: Separate pipelines for infrequent builds:
+  - FreeSurfer base images: codepipeline-freesurfer.yaml
+  - ECS Engine images: codepipeline-engine.yaml
 
   **WARNING** You will be billed for the AWS resources used if you create a stack from this template.
 
@@ -290,38 +292,8 @@ Resources:
         #       InputArtifacts:
         #         - Name: SourceCodeAsZip
 
-        - Fn::If:
-          - IsMainBranchPipeline
-          - Name: BuildFreesurferBase
-            Actions:
-              - Name: ApproveFreesurferBaseBuild
-                ActionTypeId:
-                  Category: Approval
-                  Owner: AWS
-                  Provider: Manual
-                  Version: "1"
-                Configuration:
-                  NotificationArn: !Ref PipelineApprovalTopic
-                  CustomData: "Approve to build and push FreeSurfer base image (FS7 build target)"
-                RunOrder: 1
-              - Name: BuildFreesurferBaseImage
-                ActionTypeId:
-                  Category: Build
-                  Owner: AWS
-                  Provider: CodeBuild
-                  Version: "1"
-                Configuration:
-                  ProjectName: !Ref CodeBuildProjectFreesurferBase
-                  EnvironmentVariables: !Sub |
-                    [
-                      {"name": "FREESURFER_IMAGE_REPOSITORY", "value": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FreesurferECRRepository}"},
-                      {"name": "AWS_DEFAULT_REGION", "value": "${AWS::Region}"},
-                      {"name": "BUILD_ASSETS_BUCKET", "value": "${BuildAssetsBucket}"}
-                    ]
-                RunOrder: 2
-                InputArtifacts:
-                  - Name: SourceCodeAsZip
-          - !Ref AWS::NoValue
+        # BuildFreesurferBase stage removed - now in separate pipeline (codepipeline-freesurfer.yaml)
+        # This keeps the main pipeline lean and fast
 
         - Fn::If:
           - IsFeatureBranchPipeline
@@ -432,39 +404,8 @@ Resources:
                   - Name: BuildArtifactAsZip
           - !Ref AWS::NoValue
 
-        - Fn::If:
-          - IsMainBranchPipeline
-          - Name: BuildEngine
-            Actions:
-              - Name: ApproveEngineBuild
-                ActionTypeId:
-                  Category: Approval
-                  Owner: AWS
-                  Provider: Manual
-                  Version: "1"
-                Configuration:
-                  NotificationArn: !Ref PipelineApprovalTopic
-                  CustomData: "Approve to build and deploy new ECS engine image (takes ~10 minutes, includes FreeSurfer)"
-                RunOrder: 1
-              - Name: BuildEngineImage
-                ActionTypeId:
-                  Category: Build
-                  Owner: AWS
-                  Provider: CodeBuild
-                  Version: "1"
-                Configuration:
-                  ProjectName: !Ref CodeBuildProjectEngineImage
-                  EnvironmentVariables: !Sub |
-                    [
-                      {"name": "ENGINE_IMAGE_REPOSITORY", "value": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/engine"},
-                      {"name": "AWS_DEFAULT_REGION", "value": "${AWS::Region}"},
-                      {"name": "AWS_ACCOUNT_ID", "value": "${AWS::AccountId}"},
-                      {"name": "STACK_NAME", "value": "${ProdStackName}"}
-                    ]
-                RunOrder: 2
-                InputArtifacts:
-                  - Name: SourceCodeAsZip
-          - !Ref AWS::NoValue
+        # BuildEngine stage removed - now in separate pipeline (codepipeline-engine.yaml)
+        # This keeps the main pipeline fast for Lambda deployments
 
   PipelineArtifactsBucket:
     Type: AWS::S3::Bucket
@@ -653,14 +594,6 @@ Resources:
                     - IsMainBranchPipeline
                     - !GetAtt CodeBuildProjectDeploy.Arn
                     - !Ref AWS::NoValue
-                  - !If
-                    - IsMainBranchPipeline
-                    - !GetAtt CodeBuildProjectEngineImage.Arn
-                    - !Ref AWS::NoValue
-                  - !If
-                    - IsMainBranchPipeline
-                    - !GetAtt CodeBuildProjectFreesurferBase.Arn
-                    - !Ref AWS::NoValue
               - Effect: Allow
                 Action:
                   - "cloudformation:CreateStack"
@@ -832,20 +765,6 @@ Resources:
                   - iam:PassRole
                 Resource:
                   - !GetAtt PipelineStackCloudFormationExecutionRole.Arn
-                  - "arn:aws:iam::<AWS_ACCOUNT_ID>:role/brainyes-engine-EcsTaskRole-*"
-                  - "arn:aws:iam::<AWS_ACCOUNT_ID>:role/brainyes-engine-EcsExecutionRole-*"
-        - PolicyName: ECSAccess
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ecs:DescribeTaskDefinition
-                  - ecs:RegisterTaskDefinition
-                  - ecs:UpdateService
-                  - ecs:DescribeServices
-                  - ecs:DescribeTaskDefinition
-                Resource: "*"
 
   # Uncomment and modify the following step for running the unit-tests
   # CodeBuildProjectUnitTest:
@@ -959,43 +878,8 @@ Resources:
         Type: CODEPIPELINE
         BuildSpec: pipeline/buildspec_deploy.yml
 
-  CodeBuildProjectEngineImage:
-    Condition: IsMainBranchPipeline
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Artifacts:
-        Type: CODEPIPELINE
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_LARGE  # 8 vCPUs, 15 GB RAM for faster FreeSurfer builds
-        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
-        PrivilegedMode: true
-        EnvironmentVariables:
-          - Name: BUILD_ASSETS_BUCKET
-            Value: !Ref BuildAssetsBucket
-      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
-      Source:
-        Type: CODEPIPELINE
-        BuildSpec: pipeline/buildspec_engine.yml
-
-  CodeBuildProjectFreesurferBase:
-    Condition: IsMainBranchPipeline
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Artifacts:
-        Type: CODEPIPELINE
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_LARGE
-        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
-        PrivilegedMode: true
-        EnvironmentVariables:
-          - Name: BUILD_ASSETS_BUCKET
-            Value: !Ref BuildAssetsBucket
-      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
-      Source:
-        Type: CODEPIPELINE
-        BuildSpec: pipeline/buildspec_freesurfer_base.yml
+  # CodeBuildProjectEngineImage moved to codepipeline-engine.yaml
+  # CodeBuildProjectFreesurferBase moved to codepipeline-freesurfer.yaml
 
 Outputs:
   CodeStarConnectionArn:

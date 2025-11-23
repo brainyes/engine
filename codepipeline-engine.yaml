@@ -1,0 +1,309 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Separate pipeline for building ECS Engine Docker images.
+  This pipeline is manually triggered only when the Engine image needs to be rebuilt.
+  Builds heavy Docker image with FreeSurfer (~10 minutes with large instance).
+
+  Deploy with:
+  sam deploy -t codepipeline-engine.yaml --stack-name brainyes-pipeline-engine \
+    --capabilities=CAPABILITY_IAM --profile brainyes \
+    --parameter-overrides "CodeStarConnectionArn=<your-connection-arn>"
+
+Parameters:
+  GitProviderType:
+    Type: String
+    Default: "GitHub"
+  FullRepositoryId:
+    Type: String
+    Default: "brainyes/engine"
+  MainGitBranch:
+    Type: String
+    Default: "main"
+  ProdStackName:
+    Type: String
+    Default: "brainyes-engine"
+  CodeStarConnectionArn:
+    Type: String
+    Description: "ARN of existing CodeStar connection (from main pipeline)"
+
+Resources:
+  # SNS Topic for build notifications
+  EngineBuildTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: brainyes-engine-builds
+      DisplayName: Brainyes ECS Engine Image Builds
+      Subscription:
+        - Endpoint: info@brainyes.com
+          Protocol: email
+
+  # Simple pipeline: Source -> Build Engine
+  EnginePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: brainyes-engine
+      ArtifactStore:
+        Location: !Ref PipelineArtifactsBucket
+        Type: S3
+      RoleArn: !GetAtt CodePipelineExecutionRole.Arn
+      RestartExecutionOnUpdate: false
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceCodeRepo
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: "1"
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnectionArn
+                FullRepositoryId: !Ref FullRepositoryId
+                BranchName: !Ref MainGitBranch
+              OutputArtifacts:
+                - Name: SourceCodeAsZip
+              RunOrder: 1
+
+        - Name: BuildEngine
+          Actions:
+            - Name: ApproveEngineBuild
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: "1"
+              Configuration:
+                NotificationArn: !Ref EngineBuildTopic
+                CustomData: "Approve to build and deploy new ECS engine image. Takes ~10 minutes with BUILD_GENERAL1_LARGE, includes FreeSurfer and FastSurfer."
+              RunOrder: 1
+            - Name: BuildEngineImage
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref CodeBuildProjectEngineImage
+                EnvironmentVariables: !Sub |
+                  [
+                    {"name": "ENGINE_IMAGE_REPOSITORY", "value": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/engine"},
+                    {"name": "AWS_DEFAULT_REGION", "value": "${AWS::Region}"},
+                    {"name": "AWS_ACCOUNT_ID", "value": "${AWS::AccountId}"},
+                    {"name": "STACK_NAME", "value": "${ProdStackName}"},
+                    {"name": "BUILD_ASSETS_BUCKET", "value": "brainyes-build-assets-7"}
+                  ]
+              RunOrder: 2
+              InputArtifacts:
+                - Name: SourceCodeAsZip
+
+  # S3 Buckets
+  PipelineArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: brainyes-engine-pipeline-artifacts
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  PipelineArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PipelineArtifactsBucket
+      PolicyDocument:
+        Statement:
+          - Effect: "Deny"
+            Action: "s3:*"
+            Principal: "*"
+            Resource:
+              - !Sub "${PipelineArtifactsBucket.Arn}/*"
+              - !GetAtt PipelineArtifactsBucket.Arn
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Action:
+              - s3:*
+            Effect: Allow
+            Resource:
+              - !Sub arn:${AWS::Partition}:s3:::${PipelineArtifactsBucket}
+              - !Sub arn:${AWS::Partition}:s3:::${PipelineArtifactsBucket}/*
+            Principal:
+              AWS:
+                - !GetAtt CodePipelineExecutionRole.Arn
+
+  # IAM Roles
+  CodePipelineExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+      Policies:
+        - PolicyName: CodePipelineAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "iam:PassRole"
+                Resource: "*"
+        - PolicyName: CodeStarConnectionAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "codestar-connections:UseConnection"
+                Resource: !Ref CodeStarConnectionArn
+        - PolicyName: CodePipelineCodeAndS3Bucket
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action:
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+                Effect: Allow
+                Resource:
+                  - !GetAtt PipelineArtifactsBucket.Arn
+              - Action:
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:PutObject"
+                Effect: Allow
+                Resource:
+                  - !Sub ${PipelineArtifactsBucket.Arn}/*
+        - PolicyName: CodePipelineCodeBuildAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "codebuild:StartBuild"
+                  - "codebuild:BatchGetBuilds"
+                Resource:
+                  - !GetAtt CodeBuildProjectEngineImage.Arn
+        - PolicyName: SNSPublishAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sns:Publish"
+                Resource:
+                  - !Ref EngineBuildTopic
+
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Tags:
+        - Key: Role
+          Value: engine-pipeline-codebuild-service-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+      Policies:
+        - PolicyName: CodeBuildLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+        - PolicyName: CodeBuildArtifactsBucket
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:PutObject"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${PipelineArtifactsBucket}/*"
+        - PolicyName: BuildAssetsBucketAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:ListBucket"
+                Resource:
+                  - "arn:aws:s3:::brainyes-build-assets-7/*"
+                  - "arn:aws:s3:::brainyes-build-assets-7"
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:UploadLayerPart
+                  - ecr:InitiateLayerUpload
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: "*"
+        - PolicyName: ECSAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeTaskDefinition
+                  - ecs:RegisterTaskDefinition
+                  - ecs:UpdateService
+                  - ecs:DescribeServices
+                Resource: "*"
+
+  # CodeBuild Project
+  CodeBuildProjectEngineImage:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: brainyes-engine-image-builder
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE  # 8 vCPUs, 15 GB RAM for faster builds
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: BUILD_ASSETS_BUCKET
+            Value: brainyes-build-assets-7
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec_engine.yml
+
+Outputs:
+  PipelineName:
+    Description: Name of the Engine image pipeline
+    Value: !Ref EnginePipeline
+
+  PipelineUrl:
+    Description: URL to the pipeline in AWS Console
+    Value: !Sub https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${EnginePipeline}/view?region=${AWS::Region}
