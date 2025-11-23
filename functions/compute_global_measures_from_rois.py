@@ -105,7 +105,7 @@ def _get_population_icv(nifti_file_id: str) -> Optional[float]:
         .maybe_single()\
         .execute()
 
-    if response.data and response.data.get('icv'):
+    if response and response.data and response.data.get('icv'):
         return float(response.data['icv'])
 
     return None

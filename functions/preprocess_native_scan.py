@@ -392,17 +392,6 @@ def skull_strip_threshold(img):
     return brain_img, mask_img, 'threshold'
 
 
-def otsu_threshold(hist):
-    """Compute Otsu's threshold"""
-    bin_centers = np.arange(len(hist))
-    weight1 = np.cumsum(hist)
-    weight2 = np.cumsum(hist[::-1])[::-1]
-
-    mean1 = np.cumsum(hist * bin_centers) / (weight1 + 1e-10)
-    mean2 = (np.cumsum((hist * bin_centers)[::-1]) / (weight2 + 1e-10))[::-1]
-
-    variance = weight1[:-1] * weight2[1:] * (mean1[:-1] - mean2[1:]) ** 2
-
     idx = np.argmax(variance)
     return idx
 
@@ -442,6 +431,12 @@ def assess_quality(original_img, brain_img, mask_img):
     # Compute brain/ICV ratio (should be around 0.7-0.85 for healthy adults)
     icv = compute_icv(mask_img)
     brain_icv_ratio = brain_volume / icv if icv > 0 else 0
+    
+    # Sanity check
+    if brain_icv_ratio > 0.95:
+        print(f"  ⚠️  WARNING: Brain/ICV ratio is {brain_icv_ratio:.3f} (suspiciously high).")
+        print(f"      This suggests skull-stripping failed and included the skull/background.")
+        print(f"      Check if HD-BET is installed correctly. Current method: {brain_img.header.get('descrip', b'').decode('utf-8')}")
 
     return {
         'brain_volume_mm3': float(brain_volume),

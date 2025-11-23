@@ -79,11 +79,17 @@ def process_region_batch(args):
             storage_path = f"{nifti_file_id}/visualization/region_meshes/{atlas_name}/region_{int(label)}.json"
             json_data = json.dumps(mesh_data).encode('utf-8')
 
-            supabase.storage.from_("freesurfer-outputs").upload(
+            # Upload to storage with retry logic
+            storage_path = f"{nifti_file_id}/visualization/region_meshes/{atlas_name}/region_{int(label)}.json"
+            json_data = json.dumps(mesh_data).encode('utf-8')
+
+            from utilities.supabase_utilities import retry_on_timeout
+            
+            retry_on_timeout(lambda: supabase.storage.from_("freesurfer-outputs").upload(
                 file=json_data,
                 path=storage_path,
                 file_options={"content-type": "application/json", "upsert": "true"}
-            )
+            ))
 
             results.append({"label": int(label), "success": True})
 

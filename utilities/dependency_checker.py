@@ -63,17 +63,38 @@ def check_sklearn():
 def check_hdbet():
     """Check if HD-BET is available"""
     try:
-        result = subprocess.run(['hd-bet', '--version'], capture_output=True, timeout=5)
-        version = result.stdout.decode().strip() if result.returncode == 0 else 'unknown'
-        return {
-            'available': True,
-            'version': version,
-            'method': 'HD-BET (command-line)'
-        }
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # HD-BET requires input arguments, so running with just --version or -h might return non-zero exit code
+        # We check if the command exists and runs (even if it errors due to missing args)
+        result = subprocess.run(['hd-bet', '-h'], capture_output=True, timeout=10)
+        output = result.stdout.decode() + result.stderr.decode()
+        
+        # Check for specific success indicators
+        # "usage: hd-bet" is a strong indicator it's the right tool
+        # "automated brain extraction" is part of the citation message
+        is_installed = (
+            result.returncode == 0 or 
+            "usage: hd-bet" in output.lower() or 
+            "automated brain extraction" in output.lower()
+        )
+        
+        if is_installed:
+            # Try to extract version if possible, otherwise just say installed
+            version = "installed"
+            return {
+                'available': True,
+                'version': version,
+                'method': 'HD-BET (command-line)'
+            }
+        else:
+             return {
+                'available': False,
+                'error': f'HD-BET check failed. Output: {output.strip()}',
+                'install': 'pip install HD-BET'
+            }
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         return {
             'available': False,
-            'error': 'HD-BET not installed',
+            'error': f'HD-BET not installed: {str(e)}',
             'install': 'pip install HD-BET'
         }
 

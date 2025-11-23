@@ -38,8 +38,9 @@ def retry_on_timeout(func, max_retries=3, backoff_base=2):
             last_exception = e
             error_msg = str(e).lower()
 
-            # Only retry on timeout errors
-            if 'timed out' in error_msg or 'timeout' in error_msg:
+            # Retry on timeout, connection, and SSL errors
+            retry_errors = ['timed out', 'timeout', 'connection', 'ssl', 'eof', 'decryption_failed']
+            if any(err in error_msg for err in retry_errors):
                 if attempt < max_retries - 1:
                     wait_time = backoff_base ** attempt  # Exponential backoff: 1s, 2s, 4s
                     print(f"  ⚠️  Timeout error, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")

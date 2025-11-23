@@ -44,6 +44,48 @@ def get_hippocampal_volumes(nifti_file_id: str) -> Dict[str, float]:
 
     left_volume = left_result.data[0]['volume_mm3'] if left_result.data else 0
     right_volume = right_result.data[0]['volume_mm3'] if right_result.data else 0
+    
+    # Fallback to ROI volumes (HCPex or Harvard-Oxford) if FreeSurfer data is missing
+    if left_volume == 0 and right_volume == 0:
+        print("  ℹ️  FreeSurfer segmentation not found, checking ROI volumes...")
+        from functions.calculate_roi_volumes import calculate_roi_volumes
+        from utilities.supabase_utilities import get_roi_volumes
+        
+        # Try HCPex first
+        hcpex_volumes = get_roi_volumes(nifti_file_id, 'hcpex')
+        if hcpex_volumes:
+            # HCPex labels for Hippocampus
+            # Left Hippocampus: 80
+            # Right Hippocampus: 260
+            l_hippo_id = 80
+            r_hippo_id = 260
+            
+            if l_hippo_id in hcpex_volumes:
+                left_volume = hcpex_volumes[l_hippo_id]
+            if r_hippo_id in hcpex_volumes:
+                right_volume = hcpex_volumes[r_hippo_id]
+                
+            if left_volume > 0:
+                print(f"  ✓ Found Hippocampus volumes in HCPex atlas (L: {left_volume:.0f}, R: {right_volume:.0f})")
+            
+        # If still 0, try Harvard-Oxford
+        if left_volume == 0 and right_volume == 0:
+            ho_volumes = get_roi_volumes(nifti_file_id, 'harvard-oxford')
+            if ho_volumes:
+                # Harvard-Oxford Subcortical labels
+                # Left Hippocampus: 9
+                # Right Hippocampus: 19 (Note: volume_labels.py says 19, not 20!)
+                l_hippo_id = 9
+                r_hippo_id = 19
+                
+                if l_hippo_id in ho_volumes:
+                    left_volume = ho_volumes[l_hippo_id]
+                if r_hippo_id in ho_volumes:
+                    right_volume = ho_volumes[r_hippo_id]
+                    
+                if left_volume > 0:
+                    print(f"  ✓ Found Hippocampus volumes in Harvard-Oxford atlas (L: {left_volume:.0f}, R: {right_volume:.0f})")
+
     total_volume = left_volume + right_volume
 
     return {

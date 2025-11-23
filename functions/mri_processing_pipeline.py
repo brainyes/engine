@@ -61,6 +61,12 @@ def mri_processing_pipeline(
     print(f"Started: {datetime.now().isoformat()}")
     print("="*80)
 
+    # Print dependency status for debugging
+    from utilities.dependency_checker import print_status
+    print("\nChecking Dependencies:")
+    print_status()
+    print("="*80)
+
     results = {
         'nifti_file_id': nifti_file_id,
         'pipeline_version': '2.2-multi-atlas-volume-viz',
