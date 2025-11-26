@@ -5,6 +5,7 @@ This utility helps determine which optional dependencies are installed
 and what capabilities are available for the population pipeline.
 """
 
+import os
 import subprocess
 import sys
 
@@ -61,41 +62,62 @@ def check_sklearn():
 
 
 def check_hdbet():
-    """Check if HD-BET is available"""
-    try:
-        # HD-BET requires input arguments, so running with just --version or -h might return non-zero exit code
-        # We check if the command exists and runs (even if it errors due to missing args)
-        result = subprocess.run(['hd-bet', '-h'], capture_output=True, timeout=10)
-        output = result.stdout.decode() + result.stderr.decode()
-        
-        # Check for specific success indicators
-        # "usage: hd-bet" is a strong indicator it's the right tool
-        # "automated brain extraction" is part of the citation message
-        is_installed = (
-            result.returncode == 0 or 
-            "usage: hd-bet" in output.lower() or 
-            "automated brain extraction" in output.lower()
-        )
-        
-        if is_installed:
-            # Try to extract version if possible, otherwise just say installed
-            version = "installed"
-            return {
-                'available': True,
-                'version': version,
-                'method': 'HD-BET (command-line)'
-            }
-        else:
-             return {
-                'available': False,
-                'error': f'HD-BET check failed. Output: {output.strip()}',
-                'install': 'pip install HD-BET'
-            }
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+    """Check if HD-BET CLI is available (required for skull-stripping)"""
+    import shutil
+
+    # First check if hd-bet is in PATH
+    hd_bet_path = shutil.which('hd-bet')
+    if not hd_bet_path:
+        # Also check common venv locations
+        import sys
+        venv_bin = os.path.dirname(sys.executable)
+        possible_path = os.path.join(venv_bin, 'hd-bet')
+        if os.path.exists(possible_path):
+            hd_bet_path = possible_path
+
+    if not hd_bet_path:
         return {
             'available': False,
-            'error': f'HD-BET not installed: {str(e)}',
-            'install': 'pip install HD-BET'
+            'error': 'hd-bet command not found in PATH',
+            'install': 'pip install hd-bet'
+        }
+
+    # Try running hd-bet -h to verify it works
+    try:
+        result = subprocess.run([hd_bet_path, '-h'], capture_output=True, timeout=30)
+        output = result.stdout.decode() + result.stderr.decode()
+
+        # hd-bet -h should show usage info
+        is_working = (
+            result.returncode == 0 or
+            "usage:" in output.lower() or
+            "hd-bet" in output.lower()
+        )
+
+        if is_working:
+            return {
+                'available': True,
+                'version': 'installed',
+                'method': 'HD-BET (command-line)',
+                'path': hd_bet_path
+            }
+        else:
+            return {
+                'available': False,
+                'error': f'hd-bet found but not working. Return code: {result.returncode}, Output: {output[:200]}',
+                'install': 'pip install hd-bet'
+            }
+    except subprocess.TimeoutExpired:
+        return {
+            'available': False,
+            'error': 'hd-bet command timed out (may be downloading models)',
+            'install': 'pip install hd-bet'
+        }
+    except Exception as e:
+        return {
+            'available': False,
+            'error': f'hd-bet check failed: {str(e)}',
+            'install': 'pip install hd-bet'
         }
 
 

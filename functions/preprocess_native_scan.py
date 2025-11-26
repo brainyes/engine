@@ -246,9 +246,44 @@ def skull_strip_brain(img, method='auto', file_id=None):
     raise ValueError(f"Unknown skull-stripping method: {method}")
 
 
+def find_hdbet_executable():
+    """Find hd-bet executable path"""
+    import shutil
+
+    # First check if hd-bet is in PATH
+    hd_bet_path = shutil.which('hd-bet')
+    if hd_bet_path:
+        return hd_bet_path
+
+    # Check venv bin directory (same as Python executable)
+    import sys
+    venv_bin = os.path.dirname(sys.executable)
+    possible_path = os.path.join(venv_bin, 'hd-bet')
+    if os.path.exists(possible_path):
+        return possible_path
+
+    # Check common locations
+    common_paths = [
+        '/opt/venv/bin/hd-bet',
+        '/usr/local/bin/hd-bet',
+        os.path.expanduser('~/.local/bin/hd-bet'),
+    ]
+    for path in common_paths:
+        if os.path.exists(path):
+            return path
+
+    return None
+
+
 def skull_strip_hdbet(img, file_id=None):
     """Skull-strip using HD-BET (deep learning)"""
     import subprocess
+
+    # Find hd-bet executable
+    hd_bet_path = find_hdbet_executable()
+    if not hd_bet_path:
+        raise FileNotFoundError("hd-bet executable not found. Install with: pip install hd-bet")
+    print(f"  Using HD-BET at: {hd_bet_path}")
 
     # Check if GPU is available
     device = 'cpu'
@@ -274,7 +309,7 @@ def skull_strip_hdbet(img, file_id=None):
     try:
         # Run HD-BET with TTA enabled for best accuracy
         cmd = [
-            'hd-bet',
+            hd_bet_path,
             '-i', input_path,
             '-o', os.path.join(output_dir, 'brain.nii.gz'),
             '-device', device,
