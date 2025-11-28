@@ -19,6 +19,12 @@ import nibabel as nib
 from utilities.data import supabase
 from utilities.supabase_utilities import get_nifti_file
 from utilities.dependency_checker import get_capabilities
+from utilities.nifti_validation import (
+    validate_and_load_nifti,
+    squeeze_4d_to_3d,
+    validate_mri_dimensions,
+    NiftiValidationError
+)
 
 
 def preprocess_native_scan(nifti_file_id, method='auto', skip_n4=False):
@@ -48,20 +54,24 @@ def preprocess_native_scan(nifti_file_id, method='auto', skip_n4=False):
 
     # Load image
     img = nib.load(nifti_gz_path)
-    print(f"  Image shape: {img.shape}")
-    print(f"  Voxel size: {img.header.get_zooms()[:3]} mm")
-
-    # Squeeze 4D images to 3D if needed (some datasets have trailing dimension)
-    if len(img.shape) == 4:
-        print(f"  ℹ️  Squeezing 4D image {img.shape} to 3D")
-        img_data = img.get_fdata()
-        if img.shape[3] == 1:
-            # Squeeze trailing dimension
-            img_data_3d = np.squeeze(img_data, axis=3)
-            img = nib.Nifti1Image(img_data_3d, img.affine, img.header)
-            print(f"  ✓ Squeezed to: {img.shape}")
-        else:
-            raise ValueError(f"Cannot handle 4D image with {img.shape[3]} volumes (expected 1)")
+    
+    # Validate and sanitize NIFTI file (strict mode - reject RGB images)
+    try:
+        img = validate_and_load_nifti(img, strict=True)
+    except NiftiValidationError as e:
+        print(f"\n{'='*80}")
+        print(f"VALIDATION FAILED")
+        print(f"{'='*80}")
+        raise
+    
+    # Validate dimensions
+    validate_mri_dimensions(img)
+    
+    # Squeeze 4D to 3D if needed
+    img = squeeze_4d_to_3d(img)
+    
+    print(f"  ✓ Final image shape: {img.shape}")
+    print(f"  ✓ Validation complete - proceeding with preprocessing")
 
     # Step 1: N4 Bias Field Correction (skip if already done)
     if skip_n4:
@@ -91,7 +101,7 @@ def preprocess_native_scan(nifti_file_id, method='auto', skip_n4=False):
     print("\n4. Quality Assessment...")
     quality = assess_quality(img, brain_img, brain_mask_img)
     print(f"  Brain volume: {quality['brain_volume_mm3']:,.0f} mm³")
-    print(f"  Brain/ICV ratio: {quality['brain_icv_ratio']:.3f}")
+    print(f"  Brain/original ratio: {quality['brain_to_original_ratio']:.3f}")
     print(f"  Non-zero voxels: {quality['nonzero_voxels']:,}")
 
     # Step 5: Save to Supabase
@@ -463,19 +473,24 @@ def assess_quality(original_img, brain_img, mask_img):
     brain_volume = np.sum(mask) * voxel_volume
     nonzero_voxels = np.sum(brain_img.get_fdata() > 0)
 
-    # Compute brain/ICV ratio (should be around 0.7-0.85 for healthy adults)
-    icv = compute_icv(mask_img)
-    brain_icv_ratio = brain_volume / icv if icv > 0 else 0
-    
-    # Sanity check
-    if brain_icv_ratio > 0.95:
-        print(f"  ⚠️  WARNING: Brain/ICV ratio is {brain_icv_ratio:.3f} (suspiciously high).")
-        print(f"      This suggests skull-stripping failed and included the skull/background.")
-        print(f"      Check if HD-BET is installed correctly. Current method: {brain_img.header.get('descrip', b'').decode('utf-8')}")
+    # Check if brain extraction produced a reasonable result
+    # Compare brain mask volume to original image non-zero volume
+    original_nonzero = np.sum(original_img.get_fdata() > 0)
+    brain_to_original_ratio = nonzero_voxels / original_nonzero if original_nonzero > 0 else 0
+
+    # Sanity check: brain should be smaller than the original (skull removed)
+    # Typical ratio is 0.3-0.7 depending on the original image content
+    if brain_to_original_ratio > 0.95:
+        print(f"  ⚠️  WARNING: Brain extraction ratio is {brain_to_original_ratio:.3f} (suspiciously high).")
+        print(f"      This may indicate skull-stripping didn't remove much tissue.")
+        print(f"      Check if the input is a valid T1-weighted brain MRI.")
+    elif brain_to_original_ratio < 0.1:
+        print(f"  ⚠️  WARNING: Brain extraction ratio is {brain_to_original_ratio:.3f} (suspiciously low).")
+        print(f"      This may indicate over-aggressive skull-stripping or a non-brain image.")
 
     return {
         'brain_volume_mm3': float(brain_volume),
-        'brain_icv_ratio': float(brain_icv_ratio),
+        'brain_to_original_ratio': float(brain_to_original_ratio),
         'nonzero_voxels': int(nonzero_voxels),
         'voxel_volume_mm3': float(voxel_volume)
     }
