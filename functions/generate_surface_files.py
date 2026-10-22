@@ -2,11 +2,129 @@ import os
 import argparse
 import subprocess
 import tempfile
+import numpy as np
 from datetime import datetime
 
 from utilities.data import supabase
 
 FUNCTION_NAME = "generate_surface_files"
+
+
+def _fix_hemisphere_coordinates(asc_content: str, hemisphere: str) -> str:
+    """
+    Fix hemisphere coordinates to ensure proper positioning in RAS space.
+
+    FreeSurfer surfaces in tkr coordinates may have both hemispheres positioned
+    with positive X values (depending on the scanner/processing). This function
+    ensures:
+    - Left hemisphere (lh) is centered at negative X
+    - Right hemisphere (rh) is centered at positive X
+    - Both are centered around Y=0 and Z=0
+
+    Args:
+        asc_content: The ASCII surface file content
+        hemisphere: 'lh' or 'rh'
+
+    Returns:
+        Fixed ASCII content with properly positioned coordinates
+    """
+    lines = asc_content.strip().split('\n')
+
+    # Skip comment line if present
+    header_idx = 0
+    if lines[0].startswith('#'):
+        header_idx = 1
+
+    # Parse header
+    header_parts = lines[header_idx].strip().split()
+    num_vertices = int(header_parts[0])
+    num_faces = int(header_parts[1])
+
+    # Parse vertices
+    vertices = []
+    vertex_start = header_idx + 1
+    for i in range(vertex_start, vertex_start + num_vertices):
+        parts = lines[i].strip().split()
+        x, y, z = float(parts[0]), float(parts[1]), float(parts[2])
+        # ASC format has a 4th value (usually 0) that we preserve
+        extra = parts[3] if len(parts) > 3 else '0'
+        vertices.append([x, y, z, extra])
+
+    # Convert to numpy for easy computation
+    coords = np.array([[v[0], v[1], v[2]] for v in vertices])
+
+    # Compute bounding box
+    min_coords = coords.min(axis=0)
+    max_coords = coords.max(axis=0)
+    center = (min_coords + max_coords) / 2
+
+    print(f"  📊 {hemisphere} hemisphere stats:")
+    print(f"     Original center: X={center[0]:.1f}, Y={center[1]:.1f}, Z={center[2]:.1f}")
+    print(f"     Bounding box: X=[{min_coords[0]:.1f}, {max_coords[0]:.1f}], "
+          f"Y=[{min_coords[1]:.1f}, {max_coords[1]:.1f}], Z=[{min_coords[2]:.1f}, {max_coords[2]:.1f}]")
+
+    # Check if coordinates need fixing
+    # In proper RAS: lh should have negative X center, rh should have positive X center
+    needs_fix = False
+    if hemisphere == 'lh' and center[0] > 0:
+        needs_fix = True
+        print(f"     ⚠️  Left hemisphere has positive X center - needs fixing")
+    elif hemisphere == 'rh' and center[0] > 80:  # rh way too far right
+        needs_fix = True
+        print(f"     ⚠️  Right hemisphere center too far right - needs fixing")
+
+    if needs_fix:
+        # Compute the width of the hemisphere
+        width = max_coords[0] - min_coords[0]
+
+        # Target position:
+        # - Left hemisphere centered at X = -width/3 (so it's clearly on the left)
+        # - Right hemisphere centered at X = +width/3 (so it's clearly on the right)
+        target_x = -width / 3 if hemisphere == 'lh' else width / 3
+
+        # Compute offsets to center Y and Z at 0, and move X to target
+        offset_x = target_x - center[0]
+        offset_y = -center[1]
+        offset_z = -center[2]
+
+        print(f"     🔧 Applying coordinate fix:")
+        print(f"        Offset: X={offset_x:.1f}, Y={offset_y:.1f}, Z={offset_z:.1f}")
+
+        # Apply offset to all vertices
+        coords[:, 0] += offset_x
+        coords[:, 1] += offset_y
+        coords[:, 2] += offset_z
+
+        # Update vertices list
+        for i, (x, y, z) in enumerate(coords):
+            vertices[i][0] = x
+            vertices[i][1] = y
+            vertices[i][2] = z
+
+        # Verify
+        new_center = coords.mean(axis=0)
+        print(f"     ✅ New center: X={new_center[0]:.1f}, Y={new_center[1]:.1f}, Z={new_center[2]:.1f}")
+    else:
+        print(f"     ✅ Coordinates look correct, no fix needed")
+
+    # Reconstruct ASC content
+    output_lines = []
+    if header_idx > 0:
+        output_lines.append(lines[0])  # Preserve comment
+    output_lines.append(lines[header_idx])  # Header with counts
+
+    # Write vertices
+    for v in vertices:
+        output_lines.append(f"{v[0]:.6f}  {v[1]:.6f}  {v[2]:.6f}  {v[3]}")
+
+    # Copy face lines (unchanged)
+    face_start = vertex_start + num_vertices
+    for i in range(face_start, face_start + num_faces):
+        if i < len(lines):
+            output_lines.append(lines[i])
+
+    return '\n'.join(output_lines)
+
 
 def generate_surface_files(nifti_file_id, freesurfer_output_directory=None, subject_id=None, **kwargs):
     """
@@ -17,6 +135,10 @@ def generate_surface_files(nifti_file_id, freesurfer_output_directory=None, subj
     2. Remote mode: Downloads FreeSurfer surface files (.pial) from object storage
 
     After conversion, uploads .asc files to the visualization directory in storage.
+
+    Coordinates are automatically fixed to ensure proper RAS positioning:
+    - Left hemisphere is positioned at negative X
+    - Right hemisphere is positioned at positive X
 
     Storage structure in freesurfer-outputs bucket:
         {nifti_file_id}/surf/           - Binary surface files (.pial)
@@ -113,6 +235,17 @@ def generate_surface_files(nifti_file_id, freesurfer_output_directory=None, subj
                     raise Exception(f"mris_convert failed for {hemi}.{surf_type}: {result.stderr}")
 
                 print(f"✅ Successfully converted {hemi}.{surf_type} to ASCII")
+
+                # Read the ASC file and fix coordinates if needed
+                with open(output_path, 'r') as f:
+                    asc_content = f.read()
+
+                print(f"🔧 Checking and fixing coordinates for {hemi} hemisphere...")
+                fixed_asc_content = _fix_hemisphere_coordinates(asc_content, hemi)
+
+                # Write back the fixed content
+                with open(output_path, 'w') as f:
+                    f.write(fixed_asc_content)
 
                 # Upload to Supabase storage
                 vis_storage_path = f"{nifti_file_id}/visualization/{output_filename}"

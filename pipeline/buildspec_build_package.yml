@@ -11,7 +11,6 @@ phases:
   build:
     commands:
       - sam build --use-container --template ${SAM_TEMPLATE}
-      - . ./assume-role.sh ${PROD_PIPELINE_EXECUTION_ROLE} prod-package
       - sam package --s3-bucket ${PROD_ARTIFACT_BUCKET}
                     --image-repository ${PROD_IMAGE_REPOSITORY}
                     --region ${PROD_REGION}
